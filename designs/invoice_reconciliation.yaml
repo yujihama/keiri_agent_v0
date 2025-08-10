@@ -1,0 +1,50 @@
+apiVersion: v1
+id: invoice_reconciliation
+version: 0.1.0
+vars:
+  instruction: "請求書・入金明細を照合し差異を出力"
+  output_config:
+    sheet: "Results"
+    start_row: 2
+    columns: ["A", "B", "C"]
+  output_method: "download"  # download|save_runs|both
+policy:
+  on_error: continue
+  retries: 0
+ui:
+  layout: [upload_evidence, upload_excel]
+graph:
+  - id: upload_evidence
+    block: ui.file_uploader.evidence_zip
+    out:
+      evidence_zip: evidence_zip
+  - id: parse_evidence
+    block: file.parse_zip_2tier
+    in:
+      zip_bytes: ${upload_evidence.evidence_zip}
+    out:
+      evidence: evidence
+  - id: upload_excel
+    block: ui.file_uploader.excel
+    out:
+      workbook: workbook
+  - id: match_ai
+    block: ai.invoice_payment_match
+    in:
+      evidence_data: ${parse_evidence.evidence}
+      instruction: ${vars.instruction}
+    out:
+      results: match_results
+      summary: match_summary
+  - id: write_excel
+    block: excel.write_results
+    in:
+      workbook: ${upload_excel.workbook}
+      data: ${match_ai.match_results}
+      output_config: ${vars.output_config}
+    out:
+      write_summary: write_summary
+      workbook_updated: updated_workbook
+      workbook_b64: updated_workbook_b64
+
+

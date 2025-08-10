@@ -1,0 +1,11 @@
+id: ui.placeholder
+version: 0.1.0
+entrypoint: blocks/ui/placeholder.py:PlaceholderUIBlock
+inputs: {}
+outputs:
+  value:
+    type: string
+requirements: []
+description: プレースホルダUIブロック（テスト用）
+
+

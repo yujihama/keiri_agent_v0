@@ -1,0 +1,14 @@
+apiVersion: v1
+id: common/validate_inputs
+version: 0.0.1
+graph:
+  - id: pass_through
+    block: ai.invoice_payment_match
+    in:
+      evidence_data: ${vars.results}
+      instruction: "validate"
+    out:
+      results: write_ok
+      summary: write_summary
+
+

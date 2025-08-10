@@ -1,0 +1,17 @@
+id: ai.invoice_payment_match
+version: 0.1.0
+entrypoint: blocks/processing/ai/invoice_payment_match.py:InvoicePaymentMatchBlock
+inputs:
+  evidence_data:
+    type: object
+  instruction:
+    type: string
+outputs:
+  results:
+    type: object
+  summary:
+    type: object
+requirements: []
+description: 請求書と入金明細の照合を行う（スタブ）
+
+

@@ -1,0 +1,14 @@
+id: ui.confirmation
+version: 0.1.0
+entrypoint: blocks/ui/confirmation.py:ConfirmationUIBlock
+inputs:
+  message: { type: string }
+  options:
+    type: array
+    items: { type: string }
+outputs:
+  approved: { type: boolean }
+  comment: { type: string }
+description: 人手確認ダイアログ（承認/却下）
+
+

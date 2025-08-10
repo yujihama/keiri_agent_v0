@@ -1,0 +1,13 @@
+id: file.parse_zip_2tier
+version: 0.1.0
+entrypoint: blocks/processing/file/parse_zip_2tier.py:ParseZip2TierBlock
+inputs:
+  zip_bytes:
+    type: bytes
+outputs:
+  evidence:
+    type: object
+requirements: []
+description: 2階層ZIPを解析し、証跡データ構造を返す（スタブ）
+
+

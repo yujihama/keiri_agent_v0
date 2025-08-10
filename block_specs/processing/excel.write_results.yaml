@@ -1,0 +1,21 @@
+id: excel.write_results
+version: 0.1.0
+entrypoint: blocks/processing/excel/write_results.py:ExcelWriteResultsBlock
+inputs:
+  workbook:
+    type: object
+  data:
+    type: object
+  output_config:
+    type: object
+outputs:
+  write_summary:
+    type: object
+  workbook_updated:
+    type: object
+  workbook_b64:
+    type: string
+requirements: []
+description: 結果をExcelに書き込む（ブックbytesも返却可能）
+
+

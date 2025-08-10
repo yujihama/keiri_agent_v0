@@ -1,0 +1,46 @@
+apiVersion: v1
+id: while_subflow_example
+version: 0.1.0
+vars:
+  counter: 0
+ui:
+  layout: []
+graph:
+  - id: seed
+    block: ai.invoice_payment_match
+    in:
+      evidence_data: ${vars.counter}
+      instruction: "seed"
+    out:
+      results: r
+      summary: s
+  - id: retry_until_condition
+    type: loop
+    while:
+      max_iterations: 2
+      condition:
+        expr: "${seed.s.total_amount} < 999999999"  # 常にTrueっぽい表現
+    body:
+      plan:
+        id: per_iter
+        version: 0.0.1
+        graph:
+          - id: step
+            block: ai.invoice_payment_match
+            in:
+              evidence_data: ${vars.counter}
+              instruction: "iter"
+            out:
+              results: item_result
+              summary: item_summary
+    out:
+      collect: iter_list
+  - id: call_subflow
+    type: subflow
+    call:
+      plan_id: common/validate_inputs
+    out:
+      write_ok: ok
+      write_summary: sub_summary
+
+
