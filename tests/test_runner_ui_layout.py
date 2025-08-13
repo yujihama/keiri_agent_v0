@@ -17,12 +17,36 @@ def test_ui_nodes_respect_ui_layout_order(tmp_path: Path, monkeypatch):
         version="0",
         ui=UIConfig(layout=["u1", "u2"]),
         graph=[
-            Node(id="u2", block="ui.file_uploader.excel", inputs={}, outputs={"workbook": "wb"}),
-            Node(id="u1", block="ui.file_uploader.evidence_zip", inputs={}, outputs={"evidence_zip": "zip"}),
+            Node(
+                id="u2",
+                block="ui.interactive_input",
+                inputs={
+                    "mode": "collect",
+                    "requirements": [
+                        {"id": "workbook", "type": "file", "label": "Excel", "accept": ".xlsx"}
+                    ],
+                },
+                outputs={"collected_data": "wb_data"},
+            ),
+            Node(
+                id="u1",
+                block="ui.interactive_input",
+                inputs={
+                    "mode": "collect",
+                    "requirements": [
+                        {"id": "evidence_zip", "type": "folder", "label": "ZIP"}
+                    ],
+                },
+                outputs={"collected_data": "zip_data"},
+            ),
             Node(
                 id="proc",
                 block="excel.write_results",
-                inputs={"workbook": "${u2.wb}", "data": "${u1.zip}", "output_config": {"k": 1}},
+                inputs={
+                    "workbook": {"name": "dummy.xlsx", "bytes": "${u2.wb_data.workbook}"},
+                    "data": "${u1.zip_data}",
+                    "output_config": {"sheet": "Results", "start_row": 2, "columns": ["A", "B", "C"]},
+                },
                 outputs={"write_summary": "ok"},
             ),
         ],

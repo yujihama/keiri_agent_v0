@@ -1,0 +1,67 @@
+id: ui.interactive_input
+version: 0.1.0
+entrypoint: blocks/ui/interactive_input.py:InteractiveInputBlock
+inputs:
+  mode:
+    type: string
+    enum: ["collect", "confirm", "inquire", "mixed"]
+    description: 動作モード（collect=データ収集、confirm=確認、inquire=問い合わせ、mixed=混合）
+  
+  requirements:
+    type: array
+    description: 収集する情報の定義
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+          description: フィールドID
+        type:
+          type: string
+          enum: ["file", "files", "folder", "text", "select", "boolean", "number", "chat"]
+        label:
+          type: string
+          description: 表示ラベル
+        description:
+          type: string
+          description: 説明文
+        required:
+          type: boolean
+          default: true
+        options:
+          type: array
+          description: select型の選択肢
+        accept:
+          type: string
+          description: file/folder型の受け入れ拡張子（例：".xlsx,.csv"）
+        validation:
+          type: object
+          description: バリデーションルール
+  
+  message:
+    type: string
+    description: ユーザーへの表示メッセージ
+  
+  context:
+    type: object
+    description: 前段階の処理結果などのコンテキスト情報
+
+outputs:
+  collected_data:
+    type: object
+    description: 収集されたデータ（requirementsのIDをキーとする）
+  
+  approved:
+    type: boolean
+    description: 確認モードでの承認結果
+  
+  response:
+    type: string
+    description: チャットモードでの応答内容
+  
+  metadata:
+    type: object
+    description: 収集時のメタデータ（タイムスタンプ、ユーザー情報など）
+
+requirements: []
+description: 汎用インタラクティブ入力UIブロック

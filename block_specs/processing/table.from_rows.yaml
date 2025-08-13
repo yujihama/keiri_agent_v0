@@ -1,0 +1,20 @@
+id: table.from_rows
+version: 0.1.0
+entrypoint: blocks/processing/table/from_rows.py:FromRowsToDataFrameBlock
+inputs:
+  rows:
+    type: array
+    description: list[object] 形式の行配列
+  dtype:
+    type: object
+    description: 列の型ヒント（オプション）
+outputs:
+  dataframe:
+    type: any
+    description: pandas DataFrame
+requirements: []
+description: |
+  行配列（list[dict]）から pandas DataFrame を生成するブロック。
+  実装は後続対応。ここでは定義のみ提供。
+
+

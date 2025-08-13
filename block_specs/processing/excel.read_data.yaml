@@ -1,0 +1,34 @@
+id: excel.read_data
+version: 0.1.0
+entrypoint: blocks/processing/excel/read_data.py:ExcelReadDataBlock
+inputs:
+  workbook:
+    type: object
+    description: "Excelワークブック。{name, bytes} または生bytesを受け付ける"
+  recalc:
+    type: object
+    description: |
+      再計算オプション。
+      - true | false で有効/無効（既定は LibreOffice を使用）
+      - { enabled?: true, engine?: "libreoffice"|"pycel", soffice_path?: string, timeout_sec?: number }
+  read_config:
+    type: object
+    description: |
+      読み取り設定。
+      - sheets: [{ name: シート名, header_row?: 1, range?: "A1:D", skip_empty_rows?: true }]
+      - header_row: 1（全体既定）
+      - skip_empty_rows: true
+      - date_as_iso: true
+outputs:
+  data:
+    type: object
+    description: シート名をキー、各シートの行配列（list[object]）を値とする辞書
+  summary:
+    type: object
+    description: 読み取りサマリー（シート数、各シートの行数など）
+requirements: []
+description: |
+  Excelファイルから構造化データを読み取る汎用ブロック。複数シート・ヘッダ行指定に対応。
+  オプションで LibreOffice の headless 変換を用いて数式を再計算してから data_only=True で読み取ることが可能。
+
+

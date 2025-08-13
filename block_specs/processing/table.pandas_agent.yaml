@@ -1,0 +1,55 @@
+id: table.pandas_agent
+version: 0.1.0
+entrypoint: blocks/processing/table/df_agent.py:PandasDataframeAgentBlock
+inputs:
+  dataframes:
+    type: object
+    description: |
+      pandasのDataFrameを1つ以上。単一の場合はそのまま、複数はlistまたはdictで渡す。
+      例: df、[df1, df2]、{ main: df_main, sub: df_sub }
+  instruction:
+    type: string
+    description: 実施したい処理内容（自然言語）。集計/結合/検証などを具体的に指示。
+  header_type:
+    type: string
+    description: "ヘッダーの構造ヒント: 'single' | 'multi'。multiの場合も既定でフラット化。"
+  flatten_multiindex:
+    type: boolean
+    description: "MultiIndexカラムを文字列へフラット化するか（既定: true）。"
+  flatten_joiner:
+    type: string
+    description: "フラット化時の結合子（既定: \"__\"）。"
+  sample_rows:
+    type: integer
+    description: "行数が多い場合に先頭N行へ縮約（既定: 1000、0/未指定で無効化）。"
+  allow_dangerous_code:
+    type: boolean
+    description: "LangChain側の危険なコード実行許可（既定: false）。"
+  verbose:
+    type: boolean
+    description: エージェントの詳細ログを有効化。
+outputs:
+  answer:
+    type: string
+    description: エージェントの最終出力。
+  intermediate_steps:
+    type: object
+    description: 実行の中間ステップ（利用可能な場合）。
+  summary:
+    type: object
+    description: モデル・DataFrame数・列情報などの要約。
+requirements:
+  - pandas
+  - langchain_openai
+  - langchain_experimental
+tags:
+  - table
+  - dataframe
+  - agent
+description: |
+  LangChainのpandas_dataframe_agentを利用して、与えられたDataFrame群に対して自然言語の指示に基づく
+  解析・変換・集計・検証などの処理を実行します。入力がMultiIndexカラムを持つ場合は既定で文字列にフラット化し、
+  LLMのコード生成の安定性を高めます。非常に大きいDataFrameに対しては`sample_rows`で先頭N行に縮約することで
+  実行負荷とコストを抑制します。LLM実行には OPENAI/AZURE OPENAI のAPIキーが必要です。
+
+

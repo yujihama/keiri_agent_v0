@@ -1,0 +1,25 @@
+id: transforms.filter_keyword
+version: 0.1.0
+entrypoint: blocks/processing/transforms/filter_keyword.py:FilterKeywordBlock
+inputs:
+  items:
+    type: array
+  fields:
+    type: array
+    description: 検索対象フィールド名（またはドットパス）の配列
+  keywords:
+    type: array
+    description: ヒットさせたいキーワード配列（OR 条件）
+  case_insensitive:
+    type: boolean
+outputs:
+  filtered:
+    type: array
+  excluded:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: 任意のフィールドに対するキーワードOR検索でアイテムを抽出する汎用フィルタ。
+
+

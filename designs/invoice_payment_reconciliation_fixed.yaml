@@ -1,0 +1,165 @@
+apiVersion: v1
+id: invoice_payment_reconciliation
+description: 請求書・入金明細の照合
+version: 0.1.0
+vars:
+  instruction: サンプルごとに請求書・入金明細を照合し金額が一致するか検証して結果をExcelに書き出す
+policy:
+  on_error: continue
+  retries: 0
+ui:
+  layout:
+  - ui_file_input
+  - ui_confirm
+graph:
+- id: ui_file_input
+  description: 請求書・入金明細の照合に必要なファイルをアップロード
+  block: ui.interactive_input
+  in:
+    mode: collect
+    requirements:
+      - id: evidence_zip
+        label: 証憑ZIPファイル
+        type: file
+        accept: .zip
+        required: true
+      - id: input_workbook
+        label: 出力先Excelファイル
+        type: file
+        accept: .xlsx,.xls
+        required: true
+    message: 請求書・入金明細の照合に必要なファイルをアップロードしてください
+  out:
+    collected_data: collected_data
+    metadata: metadata
+- id: extract_zip
+  description: ZIPファイルを確認
+  block: transforms.pick_bytes
+  in:
+    source: ${ui_file_input.collected_data}
+    path: evidence_zip
+  out:
+    value: value
+- id: extract_workbook
+  description: 出力先Excelファイルを確認
+  block: transforms.pick_bytes
+  in:
+    source: ${ui_file_input.collected_data}
+    path: input_workbook
+  out:
+    value: value
+- id: ui_confirm
+  description: 開始確認
+  block: ui.interactive_input
+  in:
+    mode: confirm
+    message: 請求書・入金明細の照合を開始します。よろしいですか？
+  out:
+    approved: approved
+    metadata: metadata
+- id: parse_zip
+  description: ZIPファイルを解析
+  block: file.parse_zip_2tier
+  in:
+    zip_bytes: ${extract_zip.value}
+  out:
+    evidence: evidence
+  when:
+    expr: ${ui_confirm.approved}
+- id: group_evidence
+  description: ファイルをグループ化
+  block: transforms.group_evidence
+  in:
+    evidence: ${parse_zip.evidence}
+    instruction: サンプルごとに請求書・入金明細をグループ化してください。
+    level: second_dir
+  out:
+    groups: groups
+- id: reconcile_foreach
+  description: 請求書・入金明細の照合
+  type: loop
+  out:
+    collect: raw_results
+  foreach:
+    input: ${group_evidence.groups}
+    itemVar: sample_group
+  body:
+    plan:
+      id: reconcile_iteration
+      version: 0.1.0
+      graph:
+      - id: llm_reconcile
+        block: ai.process_llm
+        in:
+          evidence_data: ${vars.sample_group.evidence}
+          group_key: ${vars.sample_group.key}
+          instruction: ${vars.sample_group.key}の請求書と入金明細を照合し、金額が一致するか検証してください。一致/不一致、請求金額、入金金額、差額、コメントを出力してください。
+          output_schema:
+            サンプル名: string
+            一致: bool
+            請求金額: number
+            入金金額: number
+            差額: number
+            コメント: string
+          per_file_chars: 1500
+          prompt: 請求書と入金明細の金額を比較し、金額が一致しているかを判定してください。出力はJSON形式で、サンプル名、一致（true/false）、請求金額、入金金額、差額、コメントを含めてください。
+        out:
+          results: results
+          summary: summary
+
+  call: null
+  policy: null
+- id: prepare_excel_data
+  description: Excelに書き出すデータを編集
+  type: loop
+  out:
+    collect: excel_rows
+  foreach:
+    input: ${reconcile_foreach.raw_results}
+    itemVar: result_dict
+  body:
+    plan:
+      id: extract_single_result
+      version: 0.1.0
+      graph:
+      - id: pick_results
+        block: transforms.pick_object
+        in:
+          source: ${vars.result_dict}
+          path: results
+        out:
+          value: row_data
+  call: null
+  policy: null
+- id: write_excel
+  description: Excelに書き出す
+  block: excel.write_results
+  in:
+    cell_updates:
+      sheet: Results
+      cells:
+        A1: サンプル名
+        B1: 一致
+        C1: 請求金額
+        D1: 入金金額
+        E1: 差額
+        F1: コメント
+    column_updates:
+      sheet: Results
+      start_row: 2
+      header_row: 1
+      column_map:
+        サンプル名: A
+        一致: B
+        請求金額: C
+        入金金額: D
+        差額: E
+        コメント: F
+      values: ${prepare_excel_data.excel_rows}
+    workbook:
+      name: output.xlsx
+      bytes: ${extract_workbook.value}
+  out:
+    workbook_b64: workbook_b64
+    workbook_updated: workbook_updated
+    write_summary: write_summary

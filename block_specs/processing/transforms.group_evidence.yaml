@@ -1,0 +1,21 @@
+id: transforms.group_evidence
+version: 0.1.0
+entrypoint: blocks/processing/transforms/group_evidence.py:GroupEvidenceBlock
+inputs:
+  evidence:
+    type: object
+  level:
+    type: string
+    description: "top_dir | second_dir | auto (default: top_dir)"
+  instruction:
+    type: string
+outputs:
+  groups:
+    type: array
+description: |
+  evidence をグループに分割し、foreach しやすい配列を返す。
+  - level=top_dir: 最上位ディレクトリ毎に分割
+  - level=second_dir: 2階層目のディレクトリ毎に分割
+  - level=auto: 1トップディレクトリかつ2階層目が存在するときは second_dir を採用
+
+

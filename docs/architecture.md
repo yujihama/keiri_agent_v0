@@ -1,415 +1,498 @@
 # 完成形アーキテクチャ詳細設計
 
-本書は、本ツールを「①業務設計」と「②業務実施」の二層で構成する完成形アーキテクチャの詳細設計を定義します。処理ブロック/UIブロックのプラグイン機構、設計ファイル（Plan）による宣言的オーケストレーション、ドライラン、実行ログ、UI統合を含みます。
+本書は「①業務設計（Plan生成）」と「②業務実施（Plan実行）」の二層で構成される完成形アーキテクチャの改訂版です。UIは `ui.interactive_input` を中核コンポーネントとして統一し、StreamlitのSession StateでUI状態を永続します。各ブロックは入出力I/Fを厳格にYAMLで宣言し、Plan生成/検証/ドライラン/実行の全工程で型安全に扱います。フォールバックは行わず、エラーは必ずUIに明示的に返します。
 
 ---
 
-## 1. 目的とスコープ
-- 目的: 保守性・拡張性・再利用性・透明性を高め、経理業務の自動化/半自動化を設計駆動で実行可能にする。
-- スコープ:
-  - 設計レイヤ（業務設計）: ユーザー指示/手順書→Plan（YAML/JSON）生成・編集・検証・ドライラン。
-  - 実行レイヤ（業務実施）: Planに従い処理ブロック/UIブロックをDAG順で実行、結果出力/ログ。
-  - プラグイン: 処理ブロック(UI含む)をディレクトリ配置＋YAML定義で自動認識。
+## 1. 設計思想（Principles）
+- インタラクティブUIの単一化: Planに含めるUIは原則 `ui.interactive_input` を使用する。
+- セッション永続: すべてのUI入力は Streamlit Session State に保存し、再実行や画面更新でも値や描画をクリアしない。
+- I/O契約の明文化: 各UI/Processingブロックは、必須/任意/既定値/バリデーション/型を YAML で構造化定義する。
+- LLM駆動のPlan生成: LLMは BlockCatalog（YAML定義の集合）を参照して Plan YAML を生成する。
+- 厳密検証とドライラン: 生成後はスキーマ/依存/I-O整合/参照解決の検証と、宣言されたサンプル/モックによるドライランを実施。
+- 型安全な受け渡し: 参照解決後のノード I/O は JSON Schema/Pydantic で静的・動的に検証する。
+- フォールバック禁止: 不備やエラーは黙って吸収せず、構造化エラーとしてUIに返す（失敗を可視化）。
 
 ---
 
-## 2. 要求事項の反映
-- 2層構成: ①業務設計、②業務実施。
-- 処理ブロック: 疎結合Pythonメソッド/クラス＋YAML定義（入出力/説明/バージョン）。
-- UIブロック: ファイルアップロード、確認ダイアログ、選択UI等をYAML定義で配備。
-- 設計時: ブロック定義を見ながらフロー（Plan）策定、ドライランでI/O疎通確認。
-- 設計ファイル: UI上で表示・編集・保存（YAML/JSON）。
-- 実施時: Plan選択で実行。UIブロックを定義順で表示。結果はUIへ出力。構造化ログで振り返り。
+## 2. 全体アーキテクチャ
 
----
-
-## 3. 全体アーキテクチャ
-
-論理構成:
-- 設計レイヤ
-  - BlockCatalog（ブロック一覧）/ Plan Editor / Plan Validator / Dry-run Engine / Plan Store
-  - AI設計支援（既存 RuleSuggester を拡張しブロック選定提案）
-- 実行レイヤ
+- 設計レイヤ（Design）
+  - BlockCatalog（ブロック定義レジストリ）/ Plan Editor / Plan Validator / Dry-run Engine / Plan Store
+  - AI設計支援（LLMが BlockCatalog を参照しPlan候補を合成）
+- 実行レイヤ（Runtime）
   - Block Registry（自動発見/バージョン解決）
-  - Plan Runner（DAG実行: 逐次/並列/条件/人手介在/ループ/サブフロー）
+  - Plan Runner（DAG実行: 逐次/並列/条件/ループ/サブフロー/HITL）
   - Observability（構造化ログ/メトリクス/イベント）
-- 既存コアの再利用
-  - LLMClient（AI処理）/ ExcelManager（出力）/ FolderProcessor（証跡構造化）/ InvoiceChecker（チェック）
+- コアコンポーネント
+  - LLMClient: OpenAI/Azure OpenAI APIのラッパー、構造化出力対応
+  - ExcelManager: openpyxlベースのExcel読み書き、セル/列単位の更新
+  - FolderProcessor: ZIP/フォルダ構造の解析、ファイル内容のテキスト抽出
+  - FileProcessor: 各種ファイル形式（PDF/DOCX/XLSX等）からのテキスト抽出
 
 ---
 
-## 業務設計（Plan生成）仕様
+## 3. UIとSession Stateの設計
 
-- 入力（UI）
-  - ユーザー指示テキスト（業務の目的/制約/優先度等）
-  - 手順書/マニュアル/規定類のアップロード（pdf, docx, xlsx, md, txt）
-- 処理フロー（Design Engine）
-  1. 文書インジェスト: アップロード文書のテキスト抽出/正規化（既存の抽出系を再利用）
-  2. 要件抽出（LLM/Structured Output）:
-     - 目標、入出力データ、必要なUI介入（アップロード/確認/選択）、分岐条件、繰り返し単位、サブフロー候補を抽出
-     - スキーマに準拠したJSONを生成（Pydantic検証）
-  3. ブロック選定/配線案生成:
-     - BlockCatalogのメタ（tags/入出力I/F）と要件をマッチングし、`graph` ノード列と依存を構築
-     - UIブロック（アップロード/確認）を必要箇所に挿入
-     - 未解決入力は `${vars.*}` プレースホルダで明示
-  4. Plan構築/ポリシー設定:
-     - `vars`, `policy(on_error/retries/timeout)`, `ui.layout`, `graph` を組み立てYAML化
-  5. ドライラン（疎通確認）:
-     - サンプル値でI/O検証、Excel書込の事前チェック、未解決参照/型不整合/閉路を検出
-  6. 差分提示/編集:
-     - Planプレビュー（YAML/JSON）と検証結果、未解決項目リストを提示し、UIで修正→再検証
-- 出力
-  - 設計ファイル（Plan YAML/JSON）を `designs/` 配下に保存（命名: `<slug>_<yyyymmddHHMM>.yaml`）
-  - 設計レポート（検出した未解決/警告/採用ブロック一覧）をUIで表示
-- UI仕様（設計タブ）
-  - ステップ: 1) 指示入力 2) 文書アップロード 3) 生成プレビュー 4) ドライラン 5) 保存/上書き
-  - YAMLエディタ（スキーマ検証/フォーマット）とテンプレート挿入（`when`/`foreach`/`subflow`）
-- LLM仕様
-  - GPT-4.1（LangChain）+ Pydantic Output Parserにより、抽出結果を型安全に受領
-  - 代表スキーマ（概要）:
-    ```json
-    {
-      "tasks": [{"name": "...", "block_id": "...", "inputs": {}, "outputs": {}}],
-      "ui": [{"type": "file_uploader|confirmation|select", "id": "...", "bind": {}}],
-      "flow": [{"from": "nodeA", "to": "nodeB", "when": "..."}],
-      "vars": {"output_config": {}},
-      "placeholders": ["vars.output_config", "..."]
-    }
-    ```
-- セキュリティ/運用
-  - アップロード文書はメモリ/一時領域で処理し、Plan以外は保存しない
-  - 生成/検証のイベントは `runs/designs/<plan>/<ts>.jsonl` に出力（任意）
+- 中核UIブロック: `ui.interactive_input`
+  - 複数フィールド（ファイル/テキスト/選択/ブール/数値/チャット等）を `requirements` で宣言的に定義。
+  - モード: `collect|confirm|inquire|mixed`。用途に合わせて同一ブロックを再利用。
+- Session State契約（必須）
+  - キー規約: `ss_key = f"plan:{plan_id}::node:{node_id}::v{block_version}"`
+  - 初期化: 初回表示時に `requirements` から初期値/既定値を構築 → `st.session_state[ss_key]` に格納。
+  - 更新: ユーザー操作時は即時 `st.session_state` に反映。Nodeの `out.collected_data` は Session State から構築。
+  - 永続: 画面再実行・再描画でも `st.session_state` の値を尊重。明示的な「リセット操作」以外でクリアしない。
+  - 互換: `requirements` のスキーマが変更された場合は「マージ+差分警告」方針（欠落/型不一致を検出）。
+- UIエラー表示
+  - 構造化エラー（後述の `BlockError`）を UI 上で強調表示し、入力再編集可能な状態を維持。
 
 ---
 
-## 4. ディレクトリ/ファイル構成（完成形）
+## 4. ブロック定義（YAML）仕様
 
-```
-keiri_agent/
-├── app.py                               # streamlitの起動コード
-├── core/
-│   ├── base_llm_service.py
-│   ├── excel_manager.py
-│   ├── file_processor.py
-│   ├── folder_processor.py
-│   ├── invoice_checker.py
-│   ├── llm_client.py
-│   ├── models.py
-│   ├── rule_manager.py
-│   ├── rule_suggester.py
-│   ├── task_engine.py                   # 既存: 段階的にPlan Runnerへ統合/委譲
-│   ├── ui_components.py
-│   ├── utils.py
-│   ├── blocks/                          # 新規: ブロック実装コード
-│   │   ├── base.py                      # ProcessingBlock/UIBlock 基底IF/Context
-│   │   ├── registry.py                  # ブロック自動発見・ロード・バージョン解決
-│   │   ├── processing/
-│   │   │   ├── ai/
-│   │   │   │   └── invoice_payment_match.py   # 例: GPTで請求-入金照合
-│   │   │   ├── excel/
-│   │   │   │   └── write_results.py           # Excel書き込み
-│   │   │   ├── file/
-│   │   │   │   └── parse_zip_2tier.py         # 2階層ZIP解析
-│   │   │   ├── transforms/                    # 任意の変換/整形
-│   │   │   └── validators/                    # 入力検証系
-│   │   └── ui/
-│   │       ├── file_uploader_evidence.py      # 証跡ZIPアップロード
-│   │       ├── file_uploader_excel.py         # Excelアップロード
-│   │       └── confirmation.py                # 人手確認ダイアログ
-│   └── plan/                            # 新規: 設計/実行エンジン
-│       ├── models.py                    # Plan/Node/Port/Binding（Pydantic）
-│       ├── loader.py                    # YAML/JSON読み込み
-│       ├── validator.py                 # スキーマ/配線/I/O型/依存検証
-│       ├── runner.py                    # DAG実行、並列/条件/HITL/再試行/ループ/サブフロー
-│       └── context.py                   # 実行コンテキスト/変数/成果物
-├── block_specs/                         # 新規: ブロック宣言YAML
-│   ├── processing/
-│   │   ├── ai.invoice_payment_match.yaml
-│   │   ├── excel.write_results.yaml
-│   │   └── file.parse_zip_2tier.yaml
-│   └── ui/
-│       ├── ui.file_uploader.evidence_zip.yaml
-│       ├── ui.file_uploader.excel.yaml
-│       └── ui.confirmation.yaml
-├── designs/                             # 新規: Plan（業務設計）保管
-│   ├── invoice_reconciliation.yaml
-│   └── common/                          # サブフロー用共通プラン（任意）
-│       └── validate_inputs.yaml
-├── runs/                                # 新規: 実行ログ（JSONL）
-│   └── invoice_reconciliation/
-│       └── 2025-08-05T12-00-00.jsonl
-├── docs/
-│   ├── architecture.md                  # 本書（完成形設計）
-│   └── implementation_plan.md           # 実装計画
-└── config/
-    ├── rules.json
-    └── task_configs.json                # 既存→Planへ順次移行（互換アダプタ）
-```
-
----
-
-## 5. 主要コンポーネントの責務
-
-- Block Registry（`core/blocks/registry.py`）
-  - `block_specs/**/*.yaml`を読み込み、`entrypoint`（`path:ClassName`）で動的ロード
-  - バージョン解決（SemVer）。破壊的変更はメジャーアップ
-  - ブロックのI/Oスキーマ連携（Pydantic/JSON Schema）
-
-- Block Base（`core/blocks/base.py`）
-  - `ProcessingBlock`/`UIBlock`の抽象IF
-  - 共通`BlockContext`（`run_id`/`workspace`/`vars`）
-  - ライフサイクル: `validate()` → `dry_run()` → `run()`
-
-- Plan（`core/plan/models.py`）
-  - `Plan`/`Node`/`Port`/`Binding`/`Policy`/`UIConfig`
-  - ノード共通: `id`, `block`（処理/Ui）に加え、任意の `when` ガード式
-  - ループ/サブフローの複合ノードを定義（後述）
-  - 参照式: `${nodeId.outputKey}` `${vars.key}` `${env.KEY}` `${config.*}`
-
-- Plan Validator（`core/plan/validator.py`）
-  - スキーマ妥当性・DAG閉路検知・入出力型一致・未解決参照検出
-  - `when`式の構文検証、`foreach.input` が配列であることの検証
-  - ループ `max_iterations` の上限検証、サブフロー参照の存在確認
-  - Excel疎通（`ExcelManager`で仮書込検証）
-
-- Plan Runner（`core/plan/runner.py`）
-  - トポロジカル順/並列実行、`when`条件によるノードスキップ
-  - ループ（`foreach`/`while`）の並列化と集約、サブフロー呼び出し
-  - ポリシー: `on_error`（halt/continue/retry）/ `retries` / `timeout_ms` / `max_concurrency`
-  - UIブロックの動的レンダリング（Streamlit）
-  - 構造化ログ（JSONL）とメトリクス（ループiterationId／サブフローrun_id継承）
-
-- UI統合（`app.py`）
-  - タブ:「請求書チェック」「業務設計」「業務実施」
-  - 設計: ブロックカタログ/Plan一覧/エディタ/ドライラン/保存
-  - 実施: Plan選択→UIブロックをPlanの`ui.layout`順に自動配置
-  - ループ/サブフローはUIに折りたたみで展開表示、条件は実行ログに分岐結果を明示
-
-- 互換アダプタ
-  - 既存 `TaskEngine` → Plan Runnerの単一Plan実行ラッパとして存置
-  - `task_configs.json` → Planへの移行支援（変換スクリプト/読み替え）
-
----
-
-## 6. ブロック定義（YAML）仕様
+すべてのブロックは `block_specs/**/*.yaml` にI/O契約を定義します。代表例（抜粋）:
 
 ```yaml
-# block_specs/processing/ai.invoice_payment_match.yaml
-id: ai.invoice_payment_match
-version: 1.0.0
-entrypoint: blocks/processing/ai/invoice_payment_match.py:InvoicePaymentMatchBlock
+# block_specs/ui/ui.interactive_input.yaml
+id: ui.interactive_input
+version: 0.1.0
+entrypoint: blocks/ui/interactive_input.py:InteractiveInputBlock
 inputs:
-  evidence_data: { $ref: "core.schemas:EvidenceData" }
-  instruction: { type: string }
-  output_config: { $ref: "core.schemas:OutputConfig" }
+  mode:
+    type: string
+    enum: ["collect", "confirm", "inquire", "mixed"]
+    description: 動作モード
+  requirements:
+    type: array
+    description: 収集する情報の定義
+    items:
+      type: object
+      required: [id, type, label]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: ["file", "files", "folder", "text", "select", "boolean", "number", "chat"] }
+        label: { type: string }
+        description: { type: string }
+        required: { type: boolean, default: true }
+        options: { type: array }
+        accept: { type: string }
+        validation: { type: object }
+  message: { type: string }
+  context: { type: object }
 outputs:
-  results: { $ref: "core.schemas:AccountingResults" }
-  summary: { $ref: "core.schemas:AccountingSummary" }
-requirements:
-  - openai
-  - pydantic
-description: 請求書と入金明細の照合をGPTで行う
+  collected_data: { type: object, description: requirements の ID をキーとする }
+  approved: { type: boolean }
+  response: { type: string }
+  metadata: { type: object }
+requirements: []
+description: 汎用インタラクティブ入力UIブロック
 ```
 
+処理系ブロックの例（型参照に `$ref` を使用）:
+
 ```yaml
-# block_specs/ui/ui.file_uploader.evidence_zip.yaml
-id: ui.file_uploader.evidence_zip
+# block_specs/processing/ai.process_llm.yaml
+id: ai.process_llm
 version: 1.0.0
-entrypoint: blocks/ui/file_uploader_evidence.py:EvidenceZipUploader
-inputs: {}
+entrypoint: blocks/processing/ai/process_llm.py:ProcessLLMBlock
+inputs:
+  evidence_data:
+    type: object
+  instruction:
+    type: string
+  prompt:
+    type: string
+    description: LLMへ渡す主命令文。未指定時はinstructionを利用。
+  system_prompt:
+    type: string
+    description: 既定のシステムプロンプトを上書きする場合に指定。
+  output_schema:
+    type: object
+    description: JSON-Schema風スキーマ（簡易）。これに基づいて動的Pydanticを生成し出力を構造化。
+  per_file_chars:
+    type: integer
+    description: "1ファイルあたりのテキスト抜粋の最大文字数（既定: 1500）。"
+  group_key:
+    type: string
 outputs:
-  evidence_zip: { type: bytes }
-description: 2階層ZIPフォルダのアップロードUI
+  results:
+    type: object
+  summary:
+    type: object
+requirements: []
+description: |
+  LLMまたはヒューリスティックで文書の抽出・照合を行う汎用ブロック。
+  - 全入力ファイルを対象に処理
+  - システム/ユーザープロンプトはPlanから指定可能
+  - 出力スキーマはPlanからJSON-Schema風に与え、動的Pydanticで構造化出力
 ```
+
+拡張ルール（共通）:
+- すべての `inputs/outputs` は JSON Schema ベース。`$ref` は `module:TypeName`（PydanticModel）や `jsonschema://` を許容。
+- `required`/`default`/`nullable`/`examples`/`dry_run.samples` をサポート。ドライランは宣言サンプルが無ければ失敗とする（フォールバック禁止）。
+- バージョニングは SemVer。破壊的変更時は major を上げ、Plan/Validator で互換警告。
 
 ---
 
-## 7. Plan（設計ファイル）仕様
+## 5. Plan（設計ファイル）DSL
+
+- 基本構造: `apiVersion`/`id`/`version`/`vars`/`policy`/`ui`/`graph`
+- 参照式: `${nodeId.key}` `${vars.key}` `${env.KEY}` `${config.*}`
+- UIレイアウト: `ui.layout` は表示順のヒント。実体は `graph` のノードでレンダリング。
+
+代表例（`ui.interactive_input` を中核に統合した例）:
 
 ```yaml
-# designs/invoice_reconciliation.yaml（例）
 apiVersion: v1
 id: invoice_reconciliation
-version: 0.1.0
+version: 0.2.0
 vars:
   instruction: "請求書・入金明細を照合し差異を出力"
   output_config: ${config.task_configs.accounting_task_1.output_config}
 policy:
-  on_error: continue   # halt|continue|retry
+  on_error: halt          # 既定は厳格に停止。retry等は明示指定
   retries: 0
   concurrency:
     default_max_workers: 4
 ui:
-  layout: [upload_evidence, upload_excel, match_ai, write_excel]
+  layout: [collect_inputs, parse_evidence, process_llm, write_excel]
 graph:
-  - id: upload_evidence
-    block: ui.file_uploader.evidence_zip
+  - id: collect_inputs
+    block: ui.interactive_input
+    in:
+      mode: mixed
+      message: "照合に必要な入力を提供してください"
+      requirements:
+        - { id: evidence_zip, type: file,   label: "証跡ZIP",    accept: ".zip" }
+        - { id: workbook,    type: file,   label: "Excel",      accept: ".xlsx" }
+        - { id: proceed,     type: boolean, label: "実行してよい" }
     out:
-      evidence_zip: evidence_zip
+      collected_data: collected
   - id: parse_evidence
     block: file.parse_zip_2tier
+    when:
+      expr: "${collect_inputs.collected.evidence_zip} != null"
     in:
-      zip_bytes: ${upload_evidence.evidence_zip}
+      zip_bytes: ${collect_inputs.collected.evidence_zip}
     out:
       evidence_data: evidence
-  - id: upload_excel
-    block: ui.file_uploader.excel
-    out:
-      workbook: workbook
-  - id: match_ai
-    block: ai.invoice_payment_match
+  - id: process_llm
+    block: ai.process_llm
     in:
       evidence_data: ${parse_evidence.evidence}
-      instruction: ${vars.instruction}
+      prompt: ${vars.instruction}
+      output_schema:
+        results:
+          type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  file: string
+                  count: integer
+        summary:
+          type: object
+          properties:
+            total_files: integer
     out:
-      results: match_results
-      summary: match_summary
+      results: results
+      summary: summary
   - id: write_excel
     block: excel.write_results
     in:
-      workbook: ${upload_excel.workbook}
-      data: ${match_ai.match_results}
+      workbook: ${collect_inputs.collected.workbook}
+      data: ${process_llm.results}
       output_config: ${vars.output_config}
     out:
       write_summary: write_summary
 ```
 
-### 7.1 条件分岐（whenガード）
-- すべてのノードは任意の `when` を持てる。`when` が偽ならノードはスキップされる。
-- `when` は式（`${...}` 参照の置換後に安全評価）または単純比較（eq/gt など）のオブジェクトを受け付ける。
+### 5.1 条件分岐（when）
+
+すべてのノードは任意の `when` プロパティを持つことができます。`when` が評価されて偽の場合、そのノードはスキップされます。
 
 ```yaml
-- id: notify_large_amount
-  block: ui.confirmation
+- id: conditional_process
+  block: ui.interactive_input
   when:
-    expr: "${match_ai.summary.total_amount} > 1000000"  # 100万円超で確認UIを表示
+    expr: "${parse_evidence.evidence.files.length} > 0"
   in:
-    message: "高額取引です。確認してください。"
+    mode: confirm
+    message: "証跡ファイルが見つかりました。処理を続行しますか？"
 ```
 
-- 推奨: 式評価には `${nodeId.key}` `${vars.key}` `${env.KEY}` を解決後、簡易式エンジンで評価（実装計画参照）。
+`when` の指定方法:
+- `expr`: 文字列式（`${...}` 参照を解決後に評価）
+- 比較オブジェクト: `{ left: "${value}", op: "gt", right: 10 }`（op: eq/ne/gt/gte/lt/lte）
 
-### 7.2 ループ（foreach/while）
-- `foreach` で配列を反復。`itemVar` に各要素を束縛し、`body`（サブグラフ/サブフロー）を実行。
-- `while` は `condition` が真の間ループ。必ず `max_iterations` を指定。
-- 既定の集約は `collect`（各イテレーションの出力をリスト化）。
+### 5.2 ループ（foreach/while）
+
+#### foreach（配列の反復）
+配列を反復処理し、各要素に対してサブグラフまたはサブフローを実行します。
 
 ```yaml
-- id: foreach_data
+- id: process_each_file
   type: loop
   foreach:
-    input: "${parse_evidence.evidence.data}"   # 配列/辞書のvaluesを想定
-    itemVar: data_item
-    max_concurrency: 4
+    input: "${parse_evidence.evidence.files}"  # 配列
+    itemVar: file                              # 各要素を束縛する変数名
+    indexVar: idx                              # インデックス（任意）
+    max_concurrency: 4                         # 並列実行数
   body:
     plan:
       graph:
-        - id: per_item_match
-          block: ai.invoice_payment_match
+        - id: analyze_file
+          block: ai.process_llm
           in:
-            evidence_data: ${data_item}
-            instruction: ${vars.instruction}
+            evidence_data: { files: ["${file}"] }
+            prompt: "このファイルの内容を要約"
+            output_schema:
+              summary: { type: string }
           out:
-            result: item_result
+            results: file_result
       exports:
-        - from: per_item_match.item_result
-          as: item_result
+        - from: analyze_file.file_result
+          as: result
   out:
-    collect: item_result            # 結果を配列で収集 → foreach_data.item_result_list
+    collect: result                            # 全イテレーションの結果をリスト化
 ```
 
-- 集約方法: `collect`（リスト化）、`reduce`（単純加算/連結等、将来拡張）。
-- `while` 例（簡易）:
+#### while（条件ループ）
+条件が真の間、繰り返し実行します。無限ループを防ぐため `max_iterations` は必須です。
+
 ```yaml
-- id: retry_until_success
+- id: retry_until_approved
   type: loop
   while:
     condition:
-      expr: "${per_item_match.status} != 'success'"
+      expr: "${approval_status.approved} != true"
     max_iterations: 3
   body:
     plan:
       graph:
-        - id: per_item_match
-          block: ai.invoice_payment_match
-          in: { ... }
+        - id: approval_status
+          block: ui.interactive_input
+          in:
+            mode: confirm
+            message: "処理結果を確認してください"
 ```
 
-### 7.3 サブフロー（再利用可能Plan呼び出し）
-- サブフローノードで別のPlan（設計）を呼び出し、I/Oをマッピング。
-- 呼び出し先の `exports` を親に返す。
+### 5.3 サブフロー（再利用可能なPlan呼び出し）
+
+別のPlanファイルを呼び出し、入出力をマッピングします。
 
 ```yaml
-- id: validate_and_write
+- id: validate_and_process
   type: subflow
   call:
-    plan_id: common/validate_inputs   # designs/common/validate_inputs.yaml
+    plan_id: common/validation_flow    # designs/common/validation_flow.yaml
     inputs:
-      workbook: ${upload_excel.workbook}
-      results: ${match_ai.match_results}
+      data: ${collect_inputs.collected}
+      rules: ${vars.validation_rules}
   out:
     exports:
-      - from: write_ok
-        as: ok
+      - from: validation_passed
+        as: is_valid
+      - from: error_messages
+        as: errors
 ```
 
-- 変数スコープ: サブフローは独立スコープ。必要な `vars` は `inputs` で明示受け渡し。`run_id` は親から派生（例: `parent#1`）。
+サブフローの特性:
+- 変数スコープ: 独立（親の `vars` は自動継承されない）
+- run_id: 親から派生（例: `parent_run#1` → `parent_run#1.sub#1`）
+- エラー伝播: サブフロー内のエラーは親に伝播
 
 ---
 
-## 8. 実行フロー（概要）
-1) UIでPlan選択→ローディング（`loader.py`）
-2) 検証（`validator.py`）: スキーマ/閉路/I-O整合/未解決参照/条件式/ループ前提
-3) ドライラン（任意）: サンプルI/O、Excel仮書込み確認
-4) 実行（`runner.py`）: DAG順にブロック実行、`when`/ループ/サブフロー対応
-5) 出力: `ExcelManager`で書込、UIへサマリー表示
-6) ログ: `runs/<plan>/<ts>.jsonl`へ構造化イベント出力（iteration/subflow/branch情報含む）
+## 6. Plan Validator（厳密検証）
+
+検証は「失敗は失敗として返す」を前提に、以下を全て満たさない場合はエラーを返す。
+1) スキーマ検証: Plan自体の構造、各ノードの `block_specs` との合致、必須入力の充足。
+2) 参照検証: `${...}` 参照の解決可能性/型互換（出力→入力）。
+3) DAG検証: 閉路なし、未使用ノード/出力の警告、実行順の一貫性。
+4) UI整合: `ui.layout` と `graph` の対応、`ui.interactive_input.requirements` の重複/型矛盾検出。
+5) 型検証: `$ref` の解決、JSON Schema と Pydantic による静的/動的チェック。
+
+いずれかに失敗した場合、`ValidationError` を構造化して返す（UIに表示）。
 
 ---
 
-## 9. ロギング/監査
-- JSON Lines形式（1行1イベント）。開始/終了/入出力サマリ/例外/リトライ/経過時間
-- ループ: `iteration.index` / `iteration.key` を付与、集約結果サイズも記録
-- サブフロー: `parent_run_id` / `child_run_id` を紐付け
-- 実行`run_id`でトレース。UIでログ閲覧/ダウンロード提供
+## 7. Dry-run Engine（フォールバック禁止）
+
+- 目的: 実データを使わずに I/O 連携の健全性を確認。
+- 方式: 各ブロックの `dry_run.samples` または `examples`、既定値/モックを宣言的に使用。宣言が無い入力はドライラン不可能として明確に失敗させる。
+- 出力: 各ノードの入出力サマリー、未解決参照、型不一致をレポート。
 
 ---
 
-## 10. 非機能要件/運用
-- 可観測性: ログ・メトリクス・UIの進捗
-- 性能: 並列処理（デフォルト4）、大きなZIP/Excelに配慮
-- セキュリティ: APIキー安全管理（.env/セッション）、一時ファイル最小化
-- 信頼性: 入出力型検証、フォールバック、リトライ、タイムアウト、`while.max_iterations` 必須
-- 互換性: 既存機能はPlanブロック化で段階統合、旧設定の読み替え（アダプタ）
+## 8. Plan Runner（実行）
+
+### 8.1 実行順序
+
+- **トポロジカル順**: DAGの依存関係に基づいて実行順を決定
+- **並列実行**: 依存関係がないノードは `policy.concurrency.default_max_workers` の範囲で並列実行
+- **条件スキップ**: `when` 条件が偽のノードは実行をスキップし、出力は未定義（`null`）
+
+### 8.2 UIレンダリング
+
+`ui.interactive_input` ブロックの処理:
+1. Session State キー生成: `f"plan:{plan_id}::node:{node_id}::v{block_version}"`
+2. 初回レンダリング時に `requirements` から初期値を構築
+3. ユーザー入力は即座に Session State へ反映
+4. ブロック出力 `collected_data` は Session State の現在値から構築
+5. 画面再描画時も Session State の値を保持（明示的リセット以外）
+
+### 8.3 実行ポリシー
+
+```yaml
+policy:
+  on_error: halt      # halt|continue|retry
+  retries: 0          # リトライ回数（on_error: retry 時）
+  timeout_ms: 300000  # ノードタイムアウト（ミリ秒）
+  concurrency:
+    default_max_workers: 4
+    per_node:         # ノード別の並列数制御
+      process_each_file: 8
+```
+
+### 8.4 構造化ログ（JSONL）
+
+実行ログは `runs/{plan_id}/{timestamp}.jsonl` に出力:
+
+```json
+{"event": "plan_start", "plan_id": "invoice_reconciliation", "run_id": "run_12345", "timestamp": "2025-01-01T10:00:00Z"}
+{"event": "node_start", "node_id": "collect_inputs", "block": "ui.interactive_input", "timestamp": "2025-01-01T10:00:01Z"}
+{"event": "node_complete", "node_id": "collect_inputs", "outputs": {"collected_data": "{...}"}, "duration_ms": 15234}
+{"event": "node_skipped", "node_id": "conditional_process", "reason": "when_condition_false", "condition": "${...} > 0"}
+{"event": "loop_iteration", "node_id": "process_each_file", "iteration": 0, "item": "{...}"}
+{"event": "node_error", "node_id": "process_llm", "error": {"code": "API_ERROR", "message": "..."}, "retry": 1}
+{"event": "plan_complete", "run_id": "run_12345", "status": "success", "total_duration_ms": 45678}
+```
 
 ---
 
-## 11. バージョニング/互換性ポリシー
-- ブロック: `id@semver`で参照。メジャー更新は互換警告/ピン止め推奨
-- Plan: `apiVersion`と`version`を保持。Validatorで互換性診断
-- `block_specs`変化時はUIで差分表示し再検証を促す
-- Plan DSLの互換: `apiVersion` で条件/ループ/サブフローのサポート範囲を明示
+## 9. エラーハンドリング（フォールバック禁止）
+
+### 9.1 エラー表現（BlockError）
+
+すべてのエラーは構造化された `BlockError` として表現し、UIに確実に返却します。
+
+```python
+class BlockError:
+    code: str           # エラーコード（例: INPUT_VALIDATION_FAILED）
+    message: str        # ユーザー向けメッセージ
+    details: dict       # 詳細情報（node_id, field, actual_value等）
+    input_snapshot: dict # エラー時の入力状態
+    hint: str          # 修正のヒント
+    recoverable: bool  # 再実行可能かどうか
+```
+
+エラーコード体系:
+- `INPUT_VALIDATION_FAILED`: 入力検証エラー
+- `OUTPUT_SCHEMA_MISMATCH`: 出力スキーマ不一致
+- `DEPENDENCY_NOT_FOUND`: 依存ノードの出力が未定義
+- `API_ERROR`: 外部API呼び出しエラー
+- `TIMEOUT_ERROR`: タイムアウト
+- `PERMISSION_DENIED`: 権限不足
+
+### 9.2 ランナーのエラー処理
+
+```yaml
+policy:
+  on_error: halt    # halt（既定）: 即座に停止
+                   # continue: エラーノードをスキップして継続
+                   # retry: 指定回数リトライ
+```
+
+エラー時の動作:
+1. **halt（既定）**: エラーノードで実行停止、UIにエラー詳細を表示
+2. **continue**: エラーノードの出力を `null` として後続処理
+3. **retry**: `policy.retries` 回まで再実行、全て失敗時は halt 同様
+
+### 9.3 UI統合
+
+エラー表示の実装:
+```python
+if error:
+    st.error(f"❌ {error.message}")
+    with st.expander("エラー詳細"):
+        st.json(error.details)
+    if error.hint:
+        st.info(f"💡 {error.hint}")
+    if error.recoverable:
+        if st.button("再実行"):
+            # Session State は保持されているため、修正後の値で再実行
+            rerun_from_node(error.details["node_id"])
+```
 
 ---
 
-## 12. 代表的ブロック（既存資産のブロック化）
-- `file.parse_zip_2tier` → `FolderProcessor.process_evidence_folder` のラップ
-- `ai.invoice_payment_match` → `LLMClient.process_accounting_task` のラップ
-- `excel.write_results` → `ExcelManager.write_results` のラップ
-- UIブロック → 既存 `CommonUIComponents` を内部利用
+## 10. ディレクトリ/ファイル構成（改訂）
+
+```
+keiri_agent/
+├── app.py
+├── core/
+│   ├── blocks/
+│   │   ├── base.py                 # ProcessingBlock/UIBlock/BlockContext（validate/dry_run/run）
+│   │   ├── registry.py             # block_specs の自動発見・ロード
+│   │   ├── processing/ ...
+│   │   └── ui/
+│   │       └── interactive_input.py
+│   ├── plan/
+│   │   ├── models.py               # Plan/Node/Port/Binding/Policy/UIConfig
+│   │   ├── loader.py
+│   │   ├── validator.py            # 厳格検証
+│   │   ├── runner.py               # 実行（UI/条件/ループ/サブフロー）
+│   │   └── context.py
+│   ├── ui/
+│   │   └── session_state.py        # Session State のラッパ（キー規約/マージ/リセット）
+│   └── schemas.py                  # 型定義（Pydantic）/ JSON Schema 生成
+├── block_specs/
+│   ├── ui/ui.interactive_input.yaml
+│   └── processing/ ...
+├── designs/
+├── runs/
+└── docs/
+```
 
 ---
 
-## 13. セキュリティ/コンプライアンス考慮
-- アップロードデータ非永続（必要時のみメモリ/一時ファイル）
-- APIキーは環境変数/入力直後にセッション格納、保存不可
-- ログは機微データをサマリー化（必要に応じてマスク）
+## 11. LLM設計支援
+
+- 入力: ユーザー指示、参考資料（pdf/docx/xlsx/md/txt）
+- コンテキスト: BlockCatalog（各 `block_specs` のJSON Schema 化）
+- 出力: Plan YAML（`ui.interactive_input` を用いた UI 入力の統合、未解決入力は `${vars.*}` で明示）
+- 安全性: Pydantic で型検証、未解決/曖昧は占位/警告として返却（自動補完しない）
+
+---
+
+## 12. セキュリティ/運用
+
+- データ: アップロードは Session State または一時領域で処理。不要な永続化は禁止。
+- 秘匿情報: APIキーは環境変数/セッション内で保持。保存不可。
+- ログ: 機微情報はサマリ化/マスク。JSONLでエクスポート可。
+
+---
+
+## 13. バージョニング/互換性
+
+- ブロック: `id@semver` を参照。メジャー更新時は互換警告/ピン止めを推奨。
+- Plan DSL: `apiVersion` と `version` を保持。Validator で互換性診断。
+- UIブロック移行戦略:
+  - レガシーブロック（`ui.file_uploader.*`, `ui.confirmation.*`）は移行期間中は存置
+  - 新規開発は `ui.interactive_input` の使用を必須とする
+  - 移行スクリプトで旧Plan内のUIブロックを `ui.interactive_input` に自動変換
 
 ---
 
 ## 14. 将来拡張
-- DAG可視化・ドラッグ&ドロップ設計エディタ
-- 外部連携（会計SaaS/DB/REST）用ブロック、Webhookトリガ
-- 集約演算（reduce）の拡張、分散キューによる大規模並列
-- 設計の版管理・差分レビュー・承認ワークフロー
+
+- UI: 複数 `ui.interactive_input` のページング/ウィザード化、入力プリセットの共有。
+- 生成: DAG可視化・ドラッグ&ドロップのPlanエディタ。
+- 実行: 分散キュー/大規模並列、集約演算の拡張。
+- 運用: 設計の版管理・差分レビュー・承認ワークフロー。
+
 

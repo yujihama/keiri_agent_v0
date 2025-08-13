@@ -24,10 +24,9 @@ class Node(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
+    description: Optional[str] = None
     block: Optional[str] = None
-    type: Optional[str] = None  # for future: loop/subflow
-    max_workers: Optional[int] = None
-    priority: Optional[int] = None
+    type: Optional[str] = None  # for loop/subflow
     inputs: Dict[str, Any] = Field(default_factory=dict, alias="in")
     outputs: Dict[str, str] = Field(default_factory=dict, alias="out")
     when: Optional[Dict[str, Any]] = None
@@ -36,10 +35,8 @@ class Node(BaseModel):
     while_: Optional[Dict[str, Any]] = Field(default=None, alias="while")
     body: Optional[Dict[str, Any]] = None
     call: Optional[Dict[str, Any]] = None
-    # per-node policy override (subset)
+    # per-node policy override
     policy: Optional[Policy] = None
-    # HITL設定
-    hitl: Optional[Dict[str, Any]] = None
 
 
 class Plan(BaseModel):
@@ -47,6 +44,7 @@ class Plan(BaseModel):
 
     apiVersion: Optional[str] = None
     id: str
+    description: Optional[str] = None
     version: str
     vars: Dict[str, Any] = Field(default_factory=dict)
     policy: Optional[Policy] = None

@@ -1,0 +1,12 @@
+id: transforms.flatten_items
+version: 0.1.0
+entrypoint: blocks/processing/transforms/flatten_items.py:FlattenItemsBlock
+inputs:
+  results_list:
+    type: array
+outputs:
+  items:
+    type: array
+description: foreach で得た results の配列から items をフラット化して連結する
+
+

@@ -26,11 +26,23 @@ def test_validator_checks_when_and_config(tmp_path: Path, monkeypatch):
         id="p",
         version="0",
         graph=[
-            Node(id="u", block="ui.file_uploader.excel", inputs={}, outputs={"workbook": "v"}),
+            Node(
+                id="u",
+                block="ui.interactive_input",
+                inputs={
+                    "mode": "collect",
+                    "requirements": [{"id": "workbook", "type": "file", "label": "Excel", "accept": ".xlsx"}],
+                },
+                outputs={"collected_data": "v"},
+            ),
             Node(
                 id="p1",
                 block="excel.write_results",
-                inputs={"workbook": "${u.v}", "data": "${u.v}", "output_config": "${config.task_configs.foo}"},
+                inputs={
+                    "workbook": {"name": "dummy.xlsx", "bytes": "${u.v.workbook}"},
+                    "data": {},
+                    "output_config": "${config.task_configs.foo}",
+                },
                 outputs={"write_summary": "s"},
                 when={"expr": "1 < 2"},
             ),

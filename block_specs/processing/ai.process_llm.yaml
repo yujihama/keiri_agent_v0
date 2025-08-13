@@ -1,0 +1,44 @@
+id: ai.process_llm
+version: 1.0.0
+entrypoint: blocks/processing/ai/process_llm.py:ProcessLLMBlock
+inputs:
+  evidence_data:
+    type: object
+    description: |
+      LLM へ渡す根拠データ。以下のキーを受け付けます:
+        - files: [{ name, ext, size, text_excerpt }] の配列（既存仕様）
+        - rows: list[object] または { rows: list[object] }
+        - 任意キー: list[object] または { results: list[object] } を含む場合、表データとして扱われます
+  instruction:
+    type: string
+  prompt:
+    type: string
+    description: LLMへ渡す主命令文。未指定時はinstructionを利用（実装でフォールバック）。
+  system_prompt:
+    type: string
+    description: 既定のシステムプロンプトを上書きする場合に指定。
+  output_schema:
+    type: object
+    description: JSON-Schema風スキーマ（簡易）。これに基づいて動的Pydanticを生成し出力を構造化。空不可（必須）。
+  per_file_chars:
+    type: integer
+    description: "1ファイルあたりのテキスト抜粋の最大文字数（既定: 1500）。"
+  per_table_rows:
+    type: integer
+    description: "表データの先頭取り込み行数（既定: 環境変数 KEIRI_AGENT_PER_TABLE_ROWS または 200）。"
+  group_key:
+    type: string
+outputs:
+  results:
+    type: object
+  summary:
+    type: object
+requirements: []
+description: |
+  LLMまたはヒューリスティックで文書の抽出・照合を行う汎用ブロック。
+  - 入力ファイル（files）と表データ（rows/results など）を対象に処理
+  - システム/ユーザープロンプトはPlanから指定可能（prompt未指定時はinstruction使用）
+  - 出力スキーマはPlanからJSON-Schema風に与え、動的Pydanticで構造化出力（必須）
+  - summaryには model, temperature, files, tables, group_key を格納
+
+

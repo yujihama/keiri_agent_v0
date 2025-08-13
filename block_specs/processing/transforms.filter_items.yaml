@@ -1,0 +1,31 @@
+id: transforms.filter_items
+version: 0.1.0
+entrypoint: blocks/processing/transforms/filter_items.py:FilterItemsBlock
+inputs:
+  items:
+    type: array
+  conditions:
+    type: array
+    description: "AND条件の配列"
+    items:
+      type: object
+      properties:
+        field: { type: string }
+        operator: { type: string }
+        value: {}
+        value2: {}
+  options:
+    type: object
+    description: "挙動オプション。case_insensitive, date_format等"
+outputs:
+  filtered:
+    type: array
+  excluded:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  汎用条件フィルタリングブロック。演算子: eq, ne, gt, gte, lt, lte, contains, in, between。
+
+

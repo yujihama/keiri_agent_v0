@@ -15,8 +15,10 @@ import networkx as nx
 
 from core.blocks.base import BlockContext, ProcessingBlock, UIBlock
 from core.blocks.registry import BlockRegistry
+from core.errors import BlockException
 from .models import Node, Plan
 from .config_store import get_store
+from .logger import register_log_path, write_event
 
 
 def _now_ts() -> str:
@@ -66,10 +68,8 @@ class PlanRunner:
         return None
 
     def _write_event(self, path: Path, event: Dict[str, Any]) -> None:
-        line = json.dumps(event, ensure_ascii=False) + "\n"
-        with self._log_lock:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(line)
+        # Deprecated in favor of core.plan.logger.write_event
+        write_event(event.get("run_id", ""), event)
 
     def _build_graph(self, plan: Plan) -> nx.DiGraph:
         g = nx.DiGraph()
@@ -92,6 +92,16 @@ class PlanRunner:
                 else:
                     i += 1
 
+        def _add_edges_from_value(val: Any, dest_id: str) -> None:
+            if isinstance(val, str):
+                add_edges_from_placeholders(val, dest_id)
+            elif isinstance(val, dict):
+                for vv in val.values():
+                    _add_edges_from_value(vv, dest_id)
+            elif isinstance(val, (list, tuple)):
+                for vv in val:
+                    _add_edges_from_value(vv, dest_id)
+
         for n in plan.graph:
             if n.type:
                 # Create edges for foreach/while references
@@ -103,10 +113,10 @@ class PlanRunner:
                     if isinstance(expr, str):
                         add_edges_from_placeholders(expr, n.id)
                 # subflow: ignore; not analyzing child plan here
-                continue
+                if n.type == "subflow":
+                    continue
             for v in n.inputs.values():
-                if isinstance(v, str):
-                    add_edges_from_placeholders(v, n.id)
+                _add_edges_from_value(v, n.id)
         return g
 
     def run(
@@ -126,8 +136,10 @@ class PlanRunner:
             ctx.vars.update(vars_overrides)
 
         log_path = self._make_run_log_path(plan)
+        # Register path so blocks/utilities can export_log with this run_id
+        register_log_path(run_id, plan.id, log_path)
         def emit(event: Dict[str, Any]) -> None:
-            self._write_event(log_path, event)
+            write_event(run_id, event)
             if on_event is not None:
                 try:
                     on_event(event)
@@ -135,7 +147,18 @@ class PlanRunner:
                     # UI callback errors must not break the runner
                     pass
 
-        emit({"type": "start", "run_id": run_id, "plan": plan.id, "parent_run_id": parent_run_id})
+        # start イベントに実行時の Plan 定義を埋め込み、後段のログ可視化で確実に復元できるようにする
+        try:
+            plan_spec = plan.model_dump(by_alias=True)
+        except Exception:
+            plan_spec = None
+        emit({
+            "type": "start",
+            "run_id": run_id,
+            "plan": plan.id,
+            "parent_run_id": parent_run_id,
+            "plan_spec": plan_spec,
+        })
 
         g = self._build_graph(plan)
         order = list(nx.topological_sort(g))
@@ -146,14 +169,22 @@ class PlanRunner:
         # Build helper maps
         node_by_id: Dict[str, Node] = {n.id: n for n in plan.graph}
 
-        # Helper to resolve an input value
+        # Helper to resolve an input value (top-level)
         def resolve(value: Any) -> Any:
             if not isinstance(value, str) or not (value.startswith("${") and value.endswith("}")):
                 return value
             inner = value[2:-1]
             if inner.startswith("vars."):
-                _, key = inner.split(".", 1)
-                return ctx.vars.get(key)
+                # Support nested path: vars.a.b.c ; Do NOT coerce non-literal types
+                path = inner.split(".", 1)[1]
+                cur: Any = ctx.vars
+                for seg in path.split("."):
+                    if isinstance(cur, dict) and seg in cur:
+                        cur = cur[seg]
+                    else:
+                        cur = None
+                        break
+                return cur
             if inner.startswith("env."):
                 _, key = inner.split(".", 1)
                 return os.environ.get(key)
@@ -192,6 +223,41 @@ class PlanRunner:
                         base_val = None
                         break
                 return base_val
+            return value
+
+        # Deep resolve for dict/list structures in node inputs
+        def resolve_deep(value: Any) -> Any:
+            if isinstance(value, str):
+                # 完全一致のプレースホルダは従来どおり直接解決
+                if value.startswith("${") and value.endswith("}"):
+                    return resolve(value)
+                # 文字列内の埋め込みプレースホルダを部分解決
+                if "${" in value:
+                    parts: List[str] = []
+                    i = 0
+                    while i < len(value):
+                        if value[i : i + 2] == "${":
+                            j = value.find("}", i + 2)
+                            if j == -1:
+                                parts.append(value[i:])
+                                break
+                            placeholder = value[i : j + 1]
+                            try:
+                                resolved = resolve(placeholder)
+                            except Exception:
+                                resolved = None
+                            parts.append("" if resolved is None else str(resolved))
+                            i = j + 1
+                        else:
+                            parts.append(value[i])
+                            i += 1
+                    return "".join(parts)
+                return value
+            if isinstance(value, dict):
+                return {k: resolve_deep(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                t = [resolve_deep(v) for v in value]
+                return tuple(t) if isinstance(value, tuple) else t
             return value
 
         def _safe_eval_expr(expr: str) -> bool:
@@ -267,6 +333,35 @@ class PlanRunner:
                 # Fallback: any non-empty string treated as truthy
                 return bool(replaced)
 
+        # Collect dependency node ids referenced by placeholders in a value (dict/list supported)
+        def _collect_dep_node_ids(val: Any) -> List[str]:
+            deps: List[str] = []
+            def _walk(v: Any) -> None:
+                if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                    inner = v[2:-1]
+                    if "." in inner and not inner.startswith(("vars.", "env.", "config.")):
+                        node_id = inner.split(".", 1)[0]
+                        if node_id:
+                            deps.append(node_id)
+                    return
+                if isinstance(v, dict):
+                    for vv in v.values():
+                        _walk(vv)
+                    return
+                if isinstance(v, (list, tuple)):
+                    for vv in v:
+                        _walk(vv)
+                    return
+            _walk(val)
+            # preserve order while deduplicating
+            seen: set[str] = set()
+            uniq: List[str] = []
+            for d in deps:
+                if d not in seen:
+                    seen.add(d)
+                    uniq.append(d)
+            return uniq
+
         # Execute nodes, grouping by same in-degree to allow simple parallelism
         indegree_levels: Dict[int, List[str]] = {}
         for nid in order:
@@ -274,6 +369,15 @@ class PlanRunner:
 
         # respect UI layout and priority within the same indegree level
         for _, nodes in sorted(indegree_levels.items(), key=lambda kv: kv[0]):
+            # Emit scheduling info per level
+            try:
+                emit({
+                    "type": "schedule_level_start",
+                    "run_id": run_id,
+                    "nodes": list(nodes),
+                })
+            except Exception:
+                pass
             ui_layout = plan.ui.layout if (plan.ui and plan.ui.layout) else []
             layout_index: Dict[str, int] = {nid_: ui_layout.index(nid_) for nid_ in ui_layout}
 
@@ -281,7 +385,7 @@ class PlanRunner:
                 n = node_by_id[nid]
                 is_ui = 0 if (n.block and str(n.block).startswith("ui.")) else 1
                 pos = layout_index.get(nid, 10**6)
-                prio = n.priority if n.priority is not None else 1000
+                prio = 1000  # Fixed priority since field was removed
                 return (is_ui, pos, prio, nid)
 
             nodes.sort(key=_sort_key)
@@ -290,29 +394,63 @@ class PlanRunner:
             if plan.policy and plan.policy.concurrency:
                 level_workers = plan.policy.concurrency.get("default_max_workers", level_workers)
             # nodeごとのmax_workersを尊重（最小値）
-            if any(node_by_id[nid].max_workers for nid in nodes):
-                per_node = min([node_by_id[nid].max_workers or level_workers for nid in nodes])
-                level_workers = max(1, min(level_workers, per_node))
+            # max_workers field was removed, use default level_workers
             with ThreadPoolExecutor(max_workers=level_workers) as ex:
                 # 依存関係: 参照を含むノードは遅延させる（簡易デフォ）
                 ready_nodes: List[str] = []
                 deferred_nodes: List[str] = []
+                executed_in_level: List[str] = []
                 for nid in nodes:
                     node = next(n for n in plan.graph if n.id == nid)
                     # when guard
                     if not evaluate_when(node):
-                        self._write_event(log_path, {"type": "node_skip", "run_id": run_id, "node": nid, "reason": "when_false"})
+                        write_event(run_id, {"type": "node_skip", "node": nid, "reason": "when_false"})
                         continue
-                    # If inputs contain placeholders to nodes not yet in results_by_node, defer
-                    unresolved = False
-                    for v in node.inputs.values():
-                        if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
-                            inner = v[2:-1]
+                    # If inputs contain placeholders (even nested) to nodes not yet in results_by_node, defer
+                    def _has_unresolved_dependency(val: Any) -> bool:
+                        if isinstance(val, str) and val.startswith("${") and val.endswith("}"):
+                            inner = val[2:-1]
+                            if "." in inner and not inner.startswith(("vars.", "env.", "config.")):
+                                dep_node = inner.split(".", 1)[0]
+                                return dep_node not in results_by_node
+                            return False
+                        if isinstance(val, dict):
+                            return any(_has_unresolved_dependency(vv) for vv in val.values())
+                        if isinstance(val, (list, tuple)):
+                            return any(_has_unresolved_dependency(vv) for vv in val)
+                        return False
+
+                    unresolved = any(_has_unresolved_dependency(v) for v in node.inputs.values())
+                    # Additional guard: foreach.input dependency must also be resolved before running loop node
+                    if not unresolved and node.type == "loop" and node.foreach:
+                        fin = node.foreach.get("input") if isinstance(node.foreach, dict) else None
+                        if isinstance(fin, str) and fin.startswith("${") and fin.endswith("}"):
+                            inner = fin[2:-1]
                             if "." in inner and not inner.startswith(("vars.", "env.", "config.")):
                                 dep_node = inner.split(".", 1)[0]
                                 if dep_node not in results_by_node:
                                     unresolved = True
-                                    break
+                    # Emit detailed defer info when unresolved
+                    if unresolved:
+                        try:
+                            dep_nodes = []
+                            for v in node.inputs.values():
+                                dep_nodes.extend(_collect_dep_node_ids(v))
+                            # unique & unresolved only
+                            dep_nodes_unique = []
+                            seen_dep: set[str] = set()
+                            for d in dep_nodes:
+                                if d not in seen_dep:
+                                    seen_dep.add(d)
+                                    if d not in results_by_node:
+                                        dep_nodes_unique.append(d)
+                            emit({
+                                "type": "node_defer",
+                                "node": nid,
+                                "unresolved_deps": dep_nodes_unique,
+                            })
+                        except Exception:
+                            pass
                     if unresolved:
                         deferred_nodes.append(nid)
                         continue
@@ -379,6 +517,7 @@ class PlanRunner:
                                 "loop": "foreach",
                                 "iterations": len(collected),
                             })
+                            executed_in_level.append(nid)
                         # while loop minimal implementation
                         elif node.type == "loop" and node.while_ and node.body and "plan" in node.body:
                             max_iter = int(node.while_.get("max_iterations", 1))
@@ -450,6 +589,7 @@ class PlanRunner:
                                 "loop": "while",
                                 "iterations": len(collected),
                             })
+                            executed_in_level.append(nid)
                         # subflow implementation
                         elif node.type == "subflow" and node.call and "plan_id" in node.call:
                             # Resolve plan path: direct file path or designs/<plan_id>.yaml
@@ -476,17 +616,19 @@ class PlanRunner:
                                     results_by_alias[parent_alias] = child_results.get(child_key)
                             results_by_node[nid] = dict(child_results)
                             emit({"type": "subflow_finish", "run_id": run_id, "node": nid})
+                            executed_in_level.append(nid)
                         continue
                     if not node.block:
                         continue
                     block = self.registry.get(node.block)
                     if isinstance(block, UIBlock):
-                        inputs = {k: resolve(v) for k, v in node.inputs.items()}
+                        inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
                         # HITL対象ノードのみ待機。それ以外は従来通り即時レンダリング（スタブ）
-                        if node.hitl or self.default_ui_hitl:
+                        if self.default_ui_hitl:
                             state = self._load_state(plan, run_id) or {}
                             pending_ui = state.get("pending_ui")
                             completed_map = state.get("ui_outputs") or {}
+                            force_ui = os.getenv("KEIRI_AGENT_FORCE_UI", "0") == "1"
                             # JSON保存されたbytesを復元する関数
                             def _decode_from_json(val):
                                 if isinstance(val, dict) and val.get("__type") == "b64bytes":
@@ -512,10 +654,10 @@ class PlanRunner:
 
                             # 既にこのノードの出力が保存済みならそれを使用
                             out = None
-                            if str(nid) in completed_map:
+                            if not force_ui and str(nid) in completed_map:
                                 out = _decode_from_json(completed_map[str(nid)])
                                 emit({"type": "ui_reuse", "run_id": run_id, "node": nid})
-                            elif pending_ui and pending_ui.get("node_id") == nid and pending_ui.get("submitted"):
+                            elif not force_ui and pending_ui and pending_ui.get("node_id") == nid and pending_ui.get("submitted"):
                                 out = _decode_from_json(pending_ui.get("outputs", {}))
                                 # move to completed map and clear pending
                                 completed_map[str(nid)] = pending_ui.get("outputs", {})
@@ -524,11 +666,19 @@ class PlanRunner:
                                 self._save_state(plan, run_id, state)
                                 emit({"type": "ui_submit", "run_id": run_id, "node": nid})
                             else:
+                                # 強制UI表示時は、過去の保存を無視して pending を再生成
+                                if force_ui:
+                                    try:
+                                        if str(nid) in completed_map:
+                                            completed_map.pop(str(nid), None)
+                                        state["ui_outputs"] = completed_map
+                                    except Exception:
+                                        pass
                                 form_info = {
                                     "node_id": nid,
                                     "run_id": run_id,
                                     "inputs": inputs,
-                                    "hitl": node.hitl or {},
+                                    "hitl": {},
                                     "submitted": False,
                                 }
                                 state["pending_ui"] = form_info
@@ -546,9 +696,10 @@ class PlanRunner:
                             if isinstance(out, dict) and local_out in out:
                                 results_by_alias[alias] = out[local_out]
                         results_by_node[nid] = dict(out)
+                        executed_in_level.append(nid)
                     else:
                         # Submit processing nodes for parallel execution within level
-                        inputs = {k: resolve(v) for k, v in node.inputs.items()}
+                        inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
 
                         def _exec(block_obj: ProcessingBlock, node_id: str, inputs_dict: Dict[str, Any]):
                             emit({"type": "node_start", "run_id": run_id, "node": node_id})
@@ -573,12 +724,31 @@ class PlanRunner:
                                 except Exception as e:  # noqa: BLE001
                                     last_err = e
                                     attempt += 1
+                                    # Extract structured error information if available
+                                    error_code = type(e).__name__
+                                    error_details = {}
+                                    recoverable = False
+                                    if isinstance(e, BlockException) and e.error:
+                                        error_code = e.error.code
+                                        error_details = {
+                                            "details": e.error.details,
+                                            "hint": e.error.hint,
+                                        }
+                                        recoverable = bool(e.error.recoverable)
+                                    else:
+                                        error_details = {
+                                            "exception_type": type(e).__name__,
+                                            "exception_args": getattr(e, "args", ()),
+                                            "input_keys": sorted(list(inputs_dict.keys())) if isinstance(inputs_dict, dict) else [],
+                                        }
                                     emit({
                                         "type": "error",
-                                        "run_id": run_id,
                                         "node": node_id,
                                         "attempt": attempt,
                                         "message": str(e),
+                                        "error_code": error_code,
+                                        "recoverable": recoverable,
+                                        "error_details": error_details,
                                     })
                                     if not node_policy or (node_policy.on_error or "continue") == "halt":
                                         raise
@@ -609,30 +779,301 @@ class PlanRunner:
                             results_by_alias[alias] = out[local_out]
                     results_by_node[node_id] = dict(out)
                     emit({"type": "node_finish", "run_id": run_id, "node": node_id, "elapsed_ms": elapsed_ms, "attempts": attempts})
-                # If there were deferred nodes, execute them now sequentially (simple fallback)
-                for nid in deferred_nodes:
-                    node = next(n for n in plan.graph if n.id == nid)
-                    inputs = {k: resolve(v) for k, v in node.inputs.items()}
-                    if not node.block:
-                        continue
-                    block = self.registry.get(node.block)
-                    if isinstance(block, UIBlock):
-                        # should not happen in this plan; but respect HITL if exists
-                        if node.hitl or self.default_ui_hitl:
-                            state = self._load_state(plan, run_id) or {}
-                            state["pending_ui"] = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
-                            self._save_state(plan, run_id, state)
-                            emit({"type": "ui_wait", "run_id": run_id, "node": nid})
-                            return results_by_alias
-                        out = block.render(ctx, inputs)
-                    else:
-                        out = block.run(ctx, inputs)
-                    for local_out, alias in node.outputs.items():
-                        if isinstance(out, dict) and local_out in out:
-                            results_by_alias[alias] = out[local_out]
-                    results_by_node[nid] = dict(out)
-                    emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": 0, "attempts": 1})
-        emit({"type": "finish", "run_id": run_id, "plan": plan.id})
+                    executed_in_level.append(node_id)
+                # If there were deferred nodes, execute them now sequentially (improved fallback)
+                if deferred_nodes:
+                    # Try to resolve deferred nodes in multiple passes to respect dependencies within the same indegree level
+                    remaining = list(deferred_nodes)
+                    made_progress = True
+                    def _dep_unresolved(val: Any) -> bool:
+                        if isinstance(val, str) and val.startswith("${") and val.endswith("}"):
+                            inner = val[2:-1]
+                            if "." in inner and not inner.startswith(("vars.", "env.", "config.")):
+                                dep_node = inner.split(".", 1)[0]
+                                return dep_node not in results_by_node
+                            return False
+                        if isinstance(val, dict):
+                            return any(_dep_unresolved(vv) for vv in val.values())
+                        if isinstance(val, (list, tuple)):
+                            return any(_dep_unresolved(vv) for vv in val)
+                        return False
+
+                    while remaining and made_progress:
+                        made_progress = False
+                        # 1) Run non-loop nodes whose dependencies are now resolved
+                        for nid in list(remaining):
+                            node = node_by_id[nid]
+                            if node.type == "loop":
+                                continue
+                            if any(_dep_unresolved(v) for v in node.inputs.values()):
+                                continue
+                            # Ready to run
+                            inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
+                            if not node.block:
+                                remaining.remove(nid)
+                                continue
+                            block = self.registry.get(node.block)
+                            if isinstance(block, UIBlock):
+                                if self.default_ui_hitl:
+                                    state = self._load_state(plan, run_id) or {}
+                                    force_ui = os.getenv("KEIRI_AGENT_FORCE_UI", "0") == "1"
+                                    # 強制UI時は既存完了を破棄
+                                    if force_ui:
+                                        try:
+                                            cm = state.get("ui_outputs") or {}
+                                            if str(nid) in cm:
+                                                cm.pop(str(nid), None)
+                                                state["ui_outputs"] = cm
+                                        except Exception:
+                                            pass
+                                    state["pending_ui"] = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
+                                    self._save_state(plan, run_id, state)
+                                    emit({"type": "ui_wait", "run_id": run_id, "node": nid})
+                                    return results_by_alias
+                                out = block.render(ctx, inputs)
+                            else:
+                                out = block.run(ctx, inputs)
+                            for local_out, alias in node.outputs.items():
+                                if isinstance(out, dict) and local_out in out:
+                                    results_by_alias[alias] = out[local_out]
+                            results_by_node[nid] = dict(out)
+                            emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": 0, "attempts": 1})
+                            remaining.remove(nid)
+                            made_progress = True
+                            executed_in_level.append(nid)
+
+                        # 2) Run loop nodes when their foreach.input resolves to a concrete list
+                        for nid in list(remaining):
+                            node = node_by_id[nid]
+                            if node.type != "loop" or not node.foreach or not node.body or "plan" not in node.body:
+                                continue
+                            fin = node.foreach.get("input") if isinstance(node.foreach, dict) else None
+                            src_resolved = resolve(fin) if isinstance(fin, str) else fin
+                            if not isinstance(src_resolved, list):
+                                # not ready yet
+                                continue
+                            item_var = node.foreach.get("itemVar", "item")
+                            max_workers = int(node.foreach.get("max_concurrency", 4))
+                            emit({
+                                "type": "loop_start",
+                                "run_id": run_id,
+                                "node": nid,
+                                "loop": "foreach",
+                                "planned_iterations": len(src_resolved),
+                            })
+                            collected: List[Any] = []
+                            def _run_child(item_value, index):
+                                child_plan_dict = node.body["plan"]
+                                from core.plan.models import Plan as ChildPlan
+                                child_plan = ChildPlan.model_validate(child_plan_dict)
+                                child_runner = PlanRunner(self.registry, self.runs_dir)
+                                emit({
+                                    "type": "loop_iter_start",
+                                    "run_id": run_id,
+                                    "node": nid,
+                                    "loop": "foreach",
+                                    "iteration": {"index": index},
+                                })
+                                child_results = child_runner.run(
+                                    child_plan,
+                                    vars_overrides={item_var: item_value},
+                                    parent_run_id=run_id,
+                                )
+                                emit({
+                                    "type": "loop_iter_finish",
+                                    "run_id": run_id,
+                                    "node": nid,
+                                    "loop": "foreach",
+                                    "iteration": {"index": index},
+                                })
+                                return child_results
+                            with ThreadPoolExecutor(max_workers=max_workers) as child_ex:
+                                futs = {child_ex.submit(_run_child, v, idx): idx for idx, v in enumerate(src_resolved)}
+                                for f in as_completed(futs):
+                                    res = f.result()
+                                    collected.append(res)
+                            out_alias = node.outputs.get("collect") if node.outputs else None
+                            if out_alias:
+                                results_by_alias[out_alias] = collected
+                            results_by_node[nid] = {"collect": collected}
+                            emit({
+                                "type": "loop_finish",
+                                "run_id": run_id,
+                                "node": nid,
+                                "loop": "foreach",
+                                "iterations": len(collected),
+                            })
+                            remaining.remove(nid)
+                            made_progress = True
+                            executed_in_level.append(nid)
+                # level end summary
+                try:
+                    # Nodes that still remained deferred after fallback (if any)
+                    leftover: List[str] = []
+                    try:
+                        # mypy: deferred_nodes may be referenced outside context; safe here
+                        leftover = [n for n in (deferred_nodes or []) if n not in executed_in_level]
+                    except Exception:
+                        leftover = []
+                    emit({
+                        "type": "schedule_level_finish",
+                        "executed": executed_in_level,
+                        "leftover": leftover,
+                    })
+                except Exception:
+                    pass
+        # Global re-evaluation pass: try to execute any remaining nodes whose
+        # dependencies have become resolvable after later-level executions.
+        try:
+            remaining = [nid for nid in order if nid not in results_by_node]
+            if remaining:
+                emit({
+                    "type": "schedule_global_pass_start",
+                    "nodes": list(remaining),
+                })
+                executed_global: List[str] = []
+                def _dep_unresolved(val: Any) -> bool:
+                    if isinstance(val, str) and val.startswith("${") and val.endswith("}"):
+                        inner = val[2:-1]
+                        if "." in inner and not inner.startswith(("vars.", "env.", "config.")):
+                            dep_node = inner.split(".", 1)[0]
+                            return dep_node not in results_by_node
+                        return False
+                    if isinstance(val, dict):
+                        return any(_dep_unresolved(vv) for vv in val.values())
+                    if isinstance(val, (list, tuple)):
+                        return any(_dep_unresolved(vv) for vv in val)
+                    return False
+                made_progress = True
+                while remaining and made_progress:
+                    made_progress = False
+                    for nid in list(remaining):
+                        node = node_by_id[nid]
+                        if not evaluate_when(node):
+                            write_event(run_id, {"type": "node_skip", "node": nid, "reason": "when_false"})
+                            remaining.remove(nid)
+                            made_progress = True
+                            continue
+                        if any(_dep_unresolved(v) for v in node.inputs.values()):
+                            continue
+                        # Ready to run
+                        inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
+                        if not node.block:
+                            remaining.remove(nid)
+                            made_progress = True
+                            continue
+                        block_obj = self.registry.get(node.block)
+                        if isinstance(block_obj, UIBlock):
+                            if self.default_ui_hitl:
+                                state = self._load_state(plan, run_id) or {}
+                                form_info = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
+                                state["pending_ui"] = form_info
+                                self._save_state(plan, run_id, state)
+                                emit({"type": "ui_wait", "node": nid})
+                                emit({
+                                    "type": "schedule_global_pass_finish",
+                                    "executed": executed_global,
+                                    "leftover": [n for n in remaining if n not in executed_global],
+                                })
+                                return results_by_alias
+                            else:
+                                emit({"type": "node_start", "run_id": run_id, "node": nid})
+                                _t0 = perf_counter()
+                                out = block_obj.render(ctx, inputs)
+                                elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
+                        else:
+                            # Processing block with minimal retry policy
+                            def _exec_block(block_inst: ProcessingBlock, node_id: str, inputs_dict: Dict[str, Any]):
+                                emit({"type": "node_start", "run_id": run_id, "node": node_id})
+                                node_policy = node.policy or plan.policy
+                                retries = node_policy.retries if node_policy else 0
+                                timeout_ms = node_policy.timeout_ms if node_policy else None
+                                attempt = 0
+                                last_err = None
+                                _t0 = perf_counter()
+                                while attempt <= retries:
+                                    try:
+                                        if timeout_ms and timeout_ms > 0:
+                                            with ThreadPoolExecutor(max_workers=1) as sx:
+                                                fut = sx.submit(block_inst.run, ctx, inputs_dict)
+                                                out = fut.result(timeout=timeout_ms / 1000.0)
+                                        else:
+                                            out = block_inst.run(ctx, inputs_dict)
+                                        elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                        return node_id, out, elapsed_ms, attempt + 1
+                                    except Exception as e:  # noqa: BLE001
+                                        last_err = e
+                                        attempt += 1
+                                        error_code = type(e).__name__
+                                        error_details = {}
+                                        recoverable = False
+                                        if isinstance(e, BlockException) and e.error:
+                                            error_code = e.error.code
+                                            error_details = {
+                                                "details": e.error.details,
+                                                "hint": e.error.hint,
+                                            }
+                                            recoverable = bool(e.error.recoverable)
+                                        else:
+                                            error_details = {
+                                                "exception_type": type(e).__name__,
+                                                "exception_args": getattr(e, "args", ()),
+                                                "input_keys": sorted(list(inputs_dict.keys())) if isinstance(inputs_dict, dict) else [],
+                                            }
+                                        emit({
+                                            "type": "error",
+                                            "node": node_id,
+                                            "attempt": attempt,
+                                            "message": str(e),
+                                            "error_code": error_code,
+                                            "recoverable": recoverable,
+                                            "error_details": error_details,
+                                        })
+                                        if not node_policy or (node_policy.on_error or "continue") == "halt":
+                                            raise
+                                        if (node_policy.on_error == "retry") and attempt <= retries:
+                                            continue
+                                        if (node_policy.on_error == "continue"):
+                                            elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                            return node_id, {}, elapsed_ms, attempt
+                                raise last_err  # type: ignore[misc]
+                            node_id, out, elapsed_ms, attempts = _exec_block(block_obj, nid, inputs)  # type: ignore[arg-type]
+                            # Resolve any alias placeholders
+                            if isinstance(out, dict):
+                                for k, v in list(out.items()):
+                                    if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                                        try:
+                                            out[k] = resolve(v)
+                                        except Exception:
+                                            pass
+                            for local_out, alias in node.outputs.items():
+                                if isinstance(out, dict) and local_out in out:
+                                    results_by_alias[alias] = out[local_out]
+                            results_by_node[nid] = dict(out)
+                            emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": attempts})
+                        remaining.remove(nid)
+                        executed_global.append(nid)
+                        made_progress = True
+                emit({
+                    "type": "schedule_global_pass_finish",
+                    "executed": executed_global,
+                    "leftover": [n for n in remaining if n not in executed_global],
+                })
+        except Exception:
+            pass
+
+        # Emit final list of unexecuted nodes (for diagnostics)
+        try:
+            not_executed = [nid for nid in order if nid not in results_by_node]
+            if not_executed:
+                emit({
+                    "type": "plan_unexecuted_nodes",
+                    "nodes": not_executed,
+                })
+        except Exception:
+            pass
+        emit({"type": "finish", "run": run_id, "plan": plan.id})
         return results_by_alias
 
 

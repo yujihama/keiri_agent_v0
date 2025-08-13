@@ -126,29 +126,102 @@ def _build_fallback_plan(
     vars_obj: Dict[str, Any] = {
         "instruction": instruction or "請求書・入金明細を照合し差異を出力",
         "output_config": {"sheet": "Results", "start_row": 2, "columns": ["A", "B", "C"]},
+        # 新スタイル指定（既定値）
+        "excel_cell_updates": {
+            "sheet": "Results",
+            "cells": {
+                "A1": "File",
+                "B1": "Count",
+                "C1": "Sum",
+            },
+        },
+        "excel_column_updates": {
+            "sheet": "Results",
+            "start_row": 2,
+            "column_map": {},
+        },
     }
 
     graph: List[Dict[str, Any]] = [
-        {"id": "upload_evidence", "block": "ui.file_uploader.evidence_zip", "out": {"evidence_zip": "evidence_zip"}},
+        {
+            "id": "upload_evidence", 
+            "block": "ui.interactive_input",
+            "in": {
+                "mode": "collect",
+                "requirements": [{
+                    "id": "evidence_zip",
+                    "type": "folder",
+                    "label": "証跡ZIPファイル",
+                    "description": "証跡ZIPファイルをアップロードしてください",
+                    "required": True
+                }],
+                "message": "証跡ZIPファイルをアップロードしてください"
+            },
+            "out": {"collected_data": "evidence_data"}
+        },
+        {
+            "id": "extract_zip",
+            "block": "transforms.pick_bytes",
+            "in": {
+                "source": "${upload_evidence.evidence_data}",
+                "path": "evidence_zip"
+            },
+            "out": {"value": "zip_bytes"},
+        },
         {
             "id": "parse_zip",
             "block": "file.parse_zip_2tier",
-            "in": {"zip_bytes": "${upload_evidence.evidence_zip}"},
+            "in": {"zip_bytes": "${extract_zip.zip_bytes}"},
             "out": {"evidence": "evidence"},
         },
-        {"id": "upload_excel", "block": "ui.file_uploader.excel", "out": {"workbook": "workbook"}},
+        {
+            "id": "upload_excel", 
+            "block": "ui.interactive_input",
+            "in": {
+                "mode": "collect",
+                "requirements": [{
+                    "id": "workbook",
+                    "type": "file",
+                    "label": "Excelファイル",
+                    "description": "結果を出力するExcelファイルをアップロードしてください",
+                    "accept": ".xlsx,.xls",
+                    "required": True
+                }],
+                "message": "結果を出力するExcelファイルをアップロードしてください"
+            },
+            "out": {"collected_data": "excel_data"}
+        },
         {
             "id": "ai_match",
-            "block": "ai.invoice_payment_match",
-            "in": {"evidence_data": "${parse_zip.evidence}", "instruction": "${vars.instruction}"},
+            "block": "ai.process_llm",
+            "in": {
+                "evidence_data": "${parse_zip.evidence}", 
+                "prompt": "${vars.instruction}",
+                "output_schema": {
+                    "results": {"type": "array", "items": {"type": "object"}},
+                    "summary": {"type": "object"}
+                }
+            },
             "out": {"results": "match_results", "summary": "match_summary"},
+        },
+        {
+            "id": "extract_workbook",
+            "block": "transforms.pick_bytes",
+            "in": {
+                "source": "${upload_excel.excel_data}",
+                "path": "workbook"
+            },
+            "out": {"value": "workbook_bytes"},
         },
         {
             "id": "excel_write",
             "block": "excel.write_results",
             "in": {
-                "workbook": "${upload_excel.workbook}",
-                "data": "${ai_match.match_results}",
+                # 型検証を満たすため、ワークブックは {name, bytes} 形式で渡す
+                "workbook": {"name": "uploaded.xlsx", "bytes": "${extract_workbook.workbook_bytes}"},
+                "cell_updates": "${vars.excel_cell_updates}",
+                "column_updates": {"sheet": "${vars.excel_column_updates.sheet}", "start_row": "${vars.excel_column_updates.start_row}", "column_map": "${vars.excel_column_updates.column_map}", "values": []},
+                "data": {},
                 "output_config": "${vars.output_config}",
             },
             "out": {
@@ -176,8 +249,15 @@ def _build_fallback_plan(
                     "graph": [
                         {
                             "id": "per_item_match",
-                            "block": "ai.invoice_payment_match",
-                            "in": {"evidence_data": "${vars.item}", "instruction": "${vars.instruction}"},
+                            "block": "ai.process_llm",
+                            "in": {
+                                "evidence_data": "${vars.item}", 
+                                "prompt": "${vars.instruction}",
+                                "output_schema": {
+                                    "results": {"type": "array", "items": {"type": "object"}},
+                                    "summary": {"type": "object"}
+                                }
+                            },
                             "out": {"results": "item_result", "summary": "item_summary"},
                         }
                     ],
@@ -239,6 +319,14 @@ def _generate_plan_llm(
         "出力は厳密にJSONのみ、余計な説明やマークダウンは不要です。"
         "各ノードは存在するblock idのみを使用し、in/outキー名はブロックスペックのキーと一致させてください。"
         "UIブロックを最低1つ含め、DAGで循環が無いようにしてください。"
+        "重要な原則:\n"
+        "1. ファイル入力が必要な場合は必ずui.interactive_inputでファイルアップロードUIを作成\n"
+        "2. ${vars.*}参照は必ずvarsセクションに定義された変数のみを使用\n"
+        "3. ai.process_llmでは 'output_schema'(非空オブジェクト) を必須、さらに 'prompt' または 'instruction' の少なくとも一方を指定\n"
+        "4. 型の整合性: 各ブロックの入力型（object/array/string等）を厳守\n"
+        "5. Excel出力時は必ず入力用のExcelファイルアップロードUIを作成\n"
+        "6. 列出力は excel.write_results の column_updates を使用し、'column_map'（ヘッダ名→列記号）または 'columns'（ヘッダ→パス）を指定\n"
+        "7. サンプルごとの処理にはforeachループを使用"
     )
 
     hints: List[str] = []
@@ -285,7 +373,15 @@ def _generate_plan_llm(
 制約:
 - outのキーはブロックのoutputsに存在するキーを使う
 - inのキーはブロックのinputsに存在するキーを使う
-- 参照は ${{node_id.alias}} または ${{vars.key}} 形式
+- 参照は ${{{{node_id.alias}}}} または ${{{{vars.key}}}} 形式のみ使用可能
+- ${{{{vars.*}}}}を使う場合、必ず対応する変数をvarsセクションに定義すること
+- ファイル処理が必要な場合、必ず最初にui.interactive_inputでファイルアップロードUIを作成
+- 型の整合性を厳守: 各入力の期待される型（object/array/string等）に合わせる
+- ai.process_llmの'evidence_data'はobject型、'prompt'と'output_schema'は必須
+  - output_schemaはオブジェクト形式で記述（例: {{field1: string, field2: number}}）、文字列で囲まない（空不可）
+  - excel.write_resultsを使う場合、必ずExcelファイル入力UIを先に作成。列は以下いずれかで指定:
+      a) column_map: {{ <headerName>: "A"|1, ... }} と values でデータ渡し（推奨: headerName = フィールド名）
+      b) columns: {{ <headerName>: <dataPath>, ... }} または [{{"header": <headerName>, "path": <dataPath>}}]（列位置は自動）
     """
 
     model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"
@@ -319,8 +415,8 @@ def _generate_plan_llm(
                 "id": n.id,
                 **({"block": n.block} if n.block else {}),
                 **({"type": n.type} if n.type else {}),
-                "in": n.inputs or {},
-                "out": n.outputs or {},
+                **({"in": n.inputs} if n.inputs else {}),
+                **({"out": n.outputs} if n.outputs else {}),
                 **({"when": n.when} if n.when else {}),
                 **({"foreach": n.foreach} if n.foreach else {}),
                 **({"while": n.while_} if n.while_ else {}),
@@ -332,9 +428,12 @@ def _generate_plan_llm(
     }
 
     plan = Plan.model_validate(plan_dict)
-    # LLM出力の静的検証に失敗したらフォールバック
-    if validate_plan(plan, registry):
-        return _build_fallback_plan(instruction, registry, options)
+    # LLM出力の静的検証
+    errors = validate_plan(plan, registry)
+    if errors:
+        # 設計思想に基づき、フォールバックせずにエラーを報告
+        error_msg = "Plan validation failed:\n" + "\n".join(f"- {e}" for e in errors)
+        raise ValueError(error_msg)
     reasoning = "LLM生成 (LangChain + OpenAI)"
     return GeneratedPlan(plan=plan, reasoning=reasoning)
 
@@ -345,23 +444,34 @@ def generate_plan(
     registry: BlockRegistry,
     options: Optional[DesignEngineOptions] = None,
 ) -> GeneratedPlan:
-    """Generate plan using LLM only. API key is required.
+    """Generate plan using LLM. 失敗時は環境変数でフォールバックを選択可能。
+
+    - 既定: LLM出力のみ（検証エラー時は例外）
+    - KEIRI_AGENT_LLM_FALLBACK in {"1","true","yes"}: 失敗時に安全なフォールバックPlanを返す
 
     Raises:
         RuntimeError: when no OPENAI/AZURE API key is set.
     """
 
     if not _have_llm_key():
-        # キーが無い環境では決定的なフォールバックPlanを返す
-        return _build_fallback_plan(instruction, registry, options)
+        # キーが無い環境ではエラーを報告
+        raise RuntimeError(
+            "OPENAI_API_KEY or AZURE_OPENAI_API_KEY is required for plan generation. "
+            "Please set one of these environment variables."
+        )
 
-    gen = _generate_plan_llm(instruction, documents_text, registry, options)
-    # 念のためここでも検証し、失敗ならフォールバック
-    if validate_plan(gen.plan, registry):
-        return _build_fallback_plan(instruction, registry, options)
+    opts = options or DesignEngineOptions()
+    fallback_enabled = str(os.getenv("KEIRI_AGENT_LLM_FALLBACK", "")).strip().lower() in {"1", "true", "yes"}
+
+    try:
+        gen = _generate_plan_llm(instruction, documents_text, registry, options)
+    except Exception as e:
+        if not fallback_enabled:
+            raise
+        # LLM失敗時のフォールバック
+        return _build_fallback_plan(instruction, registry, opts)
 
     # 強制ヒント: foreach 指定があるのに生成に含まれない場合、フォールバックの foreach を差し込む
-    opts = options or DesignEngineOptions()
     try:
         if opts.suggest_foreach and not any((n.type == "loop" and n.foreach) for n in gen.plan.graph):
             plan_dict: Dict[str, Any] = gen.plan.model_dump(by_alias=True)
@@ -376,8 +486,15 @@ def generate_plan(
                         "graph": [
                             {
                                 "id": "per_item_match",
-                                "block": "ai.invoice_payment_match",
-                                "in": {"evidence_data": "${vars.item}", "instruction": "${vars.instruction}"},
+                                "block": "ai.process_llm",
+                                "in": {
+                                    "evidence_data": "${vars.item}", 
+                                    "prompt": "${vars.instruction}",
+                                    "output_schema": {
+                                        "results": {"type": "array", "items": {"type": "object"}},
+                                        "summary": {"type": "object"}
+                                    }
+                                },
                                 "out": {"results": "item_result", "summary": "item_summary"},
                             }
                         ],
@@ -391,13 +508,18 @@ def generate_plan(
             from .models import Plan as _Plan
 
             patched = _Plan.model_validate(plan_dict)
-            # 最終チェックに通らなければフォールバック
-            if validate_plan(patched, registry):
-                return _build_fallback_plan(instruction, registry, options)
+            # 最終チェック
+            errors = validate_plan(patched, registry)
+            if errors:
+                if not fallback_enabled:
+                    error_msg = "Patched plan validation failed:\n" + "\n".join(f"- {e}" for e in errors)
+                    raise ValueError(error_msg)
+                return _build_fallback_plan(instruction, registry, opts)
             return GeneratedPlan(plan=patched, reasoning=(gen.reasoning or "") + "+foreach_hinted")
     except Exception:
-        # 差し込みに失敗しても安全にフォールバック
-        return _build_fallback_plan(instruction, registry, options)
+        if not fallback_enabled:
+            raise
+        return _build_fallback_plan(instruction, registry, opts)
 
     return gen
 

@@ -186,7 +186,34 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
         src_node, alias = inner.split(".", 1)
         return src_node, alias
 
+    # Helper function to check vars references
+    def check_vars_ref(value: Any, node_id: str, field_name: str) -> None:
+        """Check if ${vars.*} references exist in plan.vars"""
+        if isinstance(value, str) and value.startswith("${vars.") and value.endswith("}"):
+            var_path = value[7:-1]  # Remove ${vars. and }
+            # Support nested path like vars.a.b.c
+            parts = var_path.split(".")
+            current = plan.vars
+            for i, part in enumerate(parts):
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    errors.append(
+                        f"Node {node_id}: {field_name} references undefined variable '${{{value[2:-1]}}}'"
+                    )
+                    break
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                check_vars_ref(v, node_id, f"{field_name}.{k}")
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                check_vars_ref(v, node_id, f"{field_name}[{i}]")
+
     for n in plan.graph:
+        # Check all inputs for vars references
+        for input_key, input_value in n.inputs.items():
+            check_vars_ref(input_value, n.id, f"input '{input_key}'")
+        
         # validate inputs of regular nodes; loops/subflow custom handling below
         if n.type:
             # foreach: expect input + itemVar
@@ -219,9 +246,31 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
                             # Reference to another node or env: skip static validation
                             pass
                     elif not isinstance(src, (list, tuple, dict)):
-                        errors.append("Node {n.id}: foreach.input must be an iterable when specified as a literal")
+                        errors.append(f"Node {n.id}: foreach.input must be an iterable when specified as a literal")
                 if n.while_:
                     errors.append(f"Node {n.id}: both foreach and while are set (invalid)")
+                # Check body structure for foreach loops
+                if n.body:
+                    if not isinstance(n.body, dict):
+                        errors.append(f"Node {n.id}: foreach.body must be a dict")
+                    elif "plan" not in n.body:
+                        errors.append(f"Node {n.id}: foreach.body must contain 'plan' (got: {list(n.body.keys())})")
+                    else:
+                        # Validate the inner plan structure
+                        inner_plan = n.body.get("plan")
+                        if not isinstance(inner_plan, dict):
+                            errors.append(f"Node {n.id}: foreach.body.plan must be a dict")
+                        else:
+                            if "id" not in inner_plan:
+                                errors.append(f"Node {n.id}: foreach.body.plan.id is required")
+                            if "version" not in inner_plan:
+                                errors.append(f"Node {n.id}: foreach.body.plan.version is required")
+                            if "graph" not in inner_plan:
+                                errors.append(f"Node {n.id}: foreach.body.plan.graph is required")
+                            elif not isinstance(inner_plan.get("graph"), list):
+                                errors.append(f"Node {n.id}: foreach.body.plan.graph must be a list")
+                else:
+                    errors.append(f"Node {n.id}: foreach loops require body")
             # while: must have positive max_iterations
             if n.type == "loop" and n.while_:
                 if "max_iterations" not in n.while_:
@@ -233,6 +282,28 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
                             errors.append(f"Node {n.id}: while.max_iterations must be > 0")
                     except Exception:
                         errors.append(f"Node {n.id}: while.max_iterations must be an integer")
+                # Check body structure for while loops
+                if n.body:
+                    if not isinstance(n.body, dict):
+                        errors.append(f"Node {n.id}: while.body must be a dict")
+                    elif "plan" not in n.body:
+                        errors.append(f"Node {n.id}: while.body must contain 'plan' (got: {list(n.body.keys())})")
+                    else:
+                        # Validate the inner plan structure
+                        inner_plan = n.body.get("plan")
+                        if not isinstance(inner_plan, dict):
+                            errors.append(f"Node {n.id}: while.body.plan must be a dict")
+                        else:
+                            if "id" not in inner_plan:
+                                errors.append(f"Node {n.id}: while.body.plan.id is required")
+                            if "version" not in inner_plan:
+                                errors.append(f"Node {n.id}: while.body.plan.version is required")
+                            if "graph" not in inner_plan:
+                                errors.append(f"Node {n.id}: while.body.plan.graph is required")
+                            elif not isinstance(inner_plan.get("graph"), list):
+                                errors.append(f"Node {n.id}: while.body.plan.graph must be a list")
+                else:
+                    errors.append(f"Node {n.id}: while loops require body")
             # subflow: must have call.plan_id
             if n.type == "subflow":
                 if not n.call or "plan_id" not in n.call:
@@ -273,7 +344,9 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
                     f"Node {n.id}: reference to unknown node '{src_node}' in input '{k}'"
                 )
                 continue
-            if alias not in produced_aliases.get(src_node, set()):
+            # allow nested path after alias (e.g., compute_q.period.end)
+            alias_root = alias.split(".", 1)[0]
+            if alias_root not in produced_aliases.get(src_node, set()):
                 errors.append(
                     f"Node {n.id}: reference to unknown alias '{alias}' from node '{src_node}'"
                 )
@@ -284,11 +357,30 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
             if n.block and n.block in block_specs:
                 spec_in = (block_specs[n.block].inputs or {}).get(k) or {}
                 expected = spec_in.get("type")
-            actual = produced_types.get(src_node, {}).get(alias)
+            # Use root alias type for comparison
+            actual = produced_types.get(src_node, {}).get(alias_root)
             if expected is not None and actual is not None and expected != actual:
-                errors.append(
-                    f"Node {n.id}: input '{k}' type mismatch (expected {expected}, got {actual} from {src_node}.{alias})"
-                )
+                # 緩和: 参照元が object でエイリアスのネストで取得する場合は型不一致を許容
+                # 例: expected=int だが ${node.alias.path} で alias が object のとき
+                primitive_expected = str(expected).lower() in {"string", "str", "number", "float", "integer", "int", "boolean", "bool", "bytes", "binary"}
+                if not (primitive_expected and str(actual).lower() == "object" and "." in alias):
+                    errors.append(
+                        f"Node {n.id}: input '{k}' type mismatch (expected {expected}, got {actual} from {src_node}.{alias_root})"
+                    )
+
+        # Additional semantic checks for known blocks
+        if n.block == "ai.process_llm":
+            # output_schema must be non-empty object
+            oschema = n.inputs.get("output_schema") if isinstance(n.inputs, dict) else None
+            if not isinstance(oschema, dict) or not oschema:
+                errors.append(f"Node {n.id}: ai.process_llm requires non-empty 'output_schema' object")
+            # prompt or instruction must be provided (at least one)
+            prompt_v = n.inputs.get("prompt") if isinstance(n.inputs, dict) else None
+            instr_v = n.inputs.get("instruction") if isinstance(n.inputs, dict) else None
+            if not (isinstance(prompt_v, str) and prompt_v.strip()) and not (isinstance(instr_v, str) and instr_v.strip()):
+                errors.append(f"Node {n.id}: ai.process_llm requires 'prompt' or 'instruction'")
+        # excel.write_results: 互換性のため column_updates の必須チェックは行わない
+        # - 旧スタイル: data + output_config のみでも許容する
 
     # 4) DAG cycle check
     if not nx.is_directed_acyclic_graph(g):
@@ -432,8 +524,8 @@ def dry_run_plan(plan: Plan, registry: BlockRegistry) -> bool:
                 elif isinstance(cfg_ref, dict):
                     oc = cfg_ref
 
-                # 3) ダミーデータ
-                data = {"items": [{"file": "sample.txt", "count": 1, "sum": 100.0}]}
+                # 3) ダミーデータ（列マッピングに依存しない最小形）
+                data = {}
 
                 # 4) ブロック実行（メモリ上）
                 from core.blocks.base import BlockContext

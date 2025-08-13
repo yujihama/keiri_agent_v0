@@ -11,7 +11,7 @@ def test_validate_and_dry_run_ok():
     registry = BlockRegistry()
     assert registry.load_specs() >= 3
 
-    plan = load_plan(Path("designs/invoice_reconciliation.yaml"))
+    plan = load_plan(Path("designs/invoice_payment_reconciliation_fixed.yaml"))
     errors = validate_plan(plan, registry)
     assert errors == []
 
@@ -23,12 +23,12 @@ def test_validate_detects_unknown_node_in_reference():
     registry.load_specs()
 
     # load and tamper
-    plan = load_plan(Path("designs/invoice_reconciliation.yaml"))
+    plan = load_plan(Path("designs/invoice_payment_reconciliation_fixed.yaml"))
     # break a reference: point to a non-existing node id
     for node in plan.graph:
-        if node.id == "match_ai":
-            node.inputs["evidence_data"] = "${no_such_node.evidence}"
+        if node.id == "parse_zip":
+            node.inputs["zip_bytes"] = "${no_such_node.evidence}"
     errors = validate_plan(plan, registry)
-    assert any("unknown node" in e for e in errors)
+    assert any("unknown node" in e or "reference to unknown node" in e for e in errors)
 
 

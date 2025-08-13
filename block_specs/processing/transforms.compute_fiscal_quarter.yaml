@@ -1,0 +1,29 @@
+id: transforms.compute_fiscal_quarter
+version: 0.1.0
+entrypoint: blocks/processing/transforms/compute_fiscal_quarter.py:ComputeFiscalQuarterBlock
+inputs:
+  fiscal_year:
+    type: integer
+    description: "会計年度（例: 2025 は 2025-04-01 〜 2026-03-31 を指す）"
+  quarter:
+    type: string
+    description: 1Q/2Q/3Q/4Q または Q1/Q2/Q3/Q4
+  start_month:
+    type: integer
+    description: "会計年度の開始月（日本の一般的な期首は 4）。既定: 4"
+outputs:
+  period:
+    type: object
+    description: "{ start: YYYY-MM-DD, end: YYYY-MM-DD }"
+  is_q1:
+    type: boolean
+  target_sheet_name:
+    type: string
+  template_sheet_name:
+    type: string
+  quarter_label:
+    type: string
+requirements: []
+description: 会計年度と四半期から、期間（開始・終了）、テンプレート/ターゲットのシート名、1Q判定を算出する。
+
+

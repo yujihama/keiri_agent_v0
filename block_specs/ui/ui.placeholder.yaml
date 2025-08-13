@@ -1,11 +1,17 @@
 id: ui.placeholder
 version: 0.1.0
 entrypoint: blocks/ui/placeholder.py:PlaceholderUIBlock
-inputs: {}
+inputs:
+  message:
+    type: string
+  output_method:
+    type: string
 outputs:
   value:
     type: string
+  output_method:
+    type: string
 requirements: []
-description: プレースホルダUIブロック（テスト用）
+description: プレースホルダUIブロック
 
 

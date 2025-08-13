@@ -1,0 +1,23 @@
+id: file.read_csv
+version: 0.1.0
+entrypoint: blocks/processing/file/read_csv.py:ReadCSVBlock
+inputs:
+  path:
+    type: string
+  encoding:
+    type: string
+  delimiter:
+    type: string
+  has_header:
+    type: boolean
+  bytes:
+    type: bytes
+outputs:
+  rows:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: CSVファイルを読み込み、行配列（オブジェクト）として返す。
+
+

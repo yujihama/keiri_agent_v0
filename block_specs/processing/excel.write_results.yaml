@@ -8,6 +8,18 @@ inputs:
     type: object
   output_config:
     type: object
+  cell_updates:
+    type: object
+    description: "セル指定更新。{sheet?, cells:{A1: val, ...}} または {A1: val, ...} または配列で複数指定"
+  column_updates:
+    type: object
+    description: |
+      列指定更新。以下のいずれかの形式（配列も可）
+        1) 推奨: { sheet?, start_row?, header_row?, column_map:{ ヘッダ名|パス: 'A'|1, ... }, values:list|dict|DataFrame, clear_existing?: bool, write_header?: bool }
+           - column_map のキーは「ヘッダ名（例: サンプル名）」または「ドットパス（例: row_data.サンプル名）」のどちらでも可
+           - 値解決の優先順: パス直解決 -> row_data/ results の自動補完 -> 深探索（キー名）
+           - write_header 既定: true（ヘッダ行へキー名を書込）。header_row 既定: 1、start_row 既定: 2
+        2) 互換: { sheet?, start_row?, columns: { ヘッダ名: パス, ... } | [{ header, path }], values, ... }
 outputs:
   write_summary:
     type: object
@@ -16,6 +28,38 @@ outputs:
   workbook_b64:
     type: string
 requirements: []
-description: 結果をExcelに書き込む（ブックbytesも返却可能）
+description: |
+  Excelへの書き込みブロック。
+  入力ルール:
+    - workbook: { name: str, bytes: b"..." }
+    - cell_updates: 1行目ヘッダーなどの単発セル更新に使用。
+        形式: { sheet?: str, cells: {A1: val, ...} } | {A1: val, ...} | [ ... ]
+    - column_updates: データ行の一括書き込みに使用。
+        推奨: ヘッダ名->列の column_map 記法（値はフィールド名のみでOK）。
+        例:
+          column_updates:
+            sheet: Results
+            start_row: 2
+            header_row: 1
+            column_map:
+              サンプル名: A
+              一致: B
+              請求金額: C
+              入金金額: D
+              差額: E
+              コメント: F
+            values: ${prepare_excel_data.excel_rows}
+  典型例:
+    - 1行目にヘッダー、2行目以降に前段AIの結果を転記
+      in:
+        workbook: ${upload_excel.workbook}
+        cell_updates:
+          sheet: Results
+          cells: { A1: File, B1: Count, C1: Sum }
+        column_updates:
+          sheet: Results
+          start_row: 2
+          column_map: { file: A, count: B, sum: C }
+          values: ${ai_match.match_results.items}
 
 

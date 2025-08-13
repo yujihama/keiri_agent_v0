@@ -1,0 +1,172 @@
+apiVersion: v1
+id: retirement_benefit_q1_2025
+version: 1.0.0
+vars:
+  instruction: 退職給付金の計算
+policy:
+  on_error: continue
+  retries: 0
+ui:
+  layout: [upload_files, select_quarter]
+graph:
+  # -1) 対象ファイルのアップロード（CSV/Excel）
+  - id: upload_files
+    block: ui.interactive_input
+    in:
+      mode: collect
+      requirements:
+        - { id: employees_csv, type: file, label: "社員一覧.csv", required: true, description: "CSVをアップロード" }
+        - { id: journal_csv, type: file, label: "仕訳データ.csv", required: true, description: "CSVをアップロード" }
+        - { id: workbook, type: file, label: "退職給付ワークブック.xlsx", required: true, description: "テンプレート/直前期のExcelをアップロード", accept: ".xlsx" }
+    out:
+      collected_data: uploaded
+  # 0) 四半期の入力（UI）
+  - id: select_quarter
+    block: ui.interactive_input
+    in:
+      mode: inquire
+      message: "対象の会計期間を教えてください"
+      requirements:
+        - { id: fiscal_year, type: select, label: "会計年度 (YYYY)", options: ["2024","2025","2026"], default: "2025", required: true }
+        - { id: quarter, type: select, label: "四半期", options: ["Q1","Q2","Q3","Q4"], default: "Q1", required: true }
+    out:
+      collected_data: qin
+
+  # 1) 四半期から期間・シート名・1Q判定を算出
+  - id: compute_q
+    block: transforms.compute_fiscal_quarter
+    in:
+      fiscal_year: ${select_quarter.qin.fiscal_year}
+      quarter: ${select_quarter.qin.quarter}
+      start_month: 4
+    out:
+      period: period
+      is_q1: is_q1
+      target_sheet_name: target_sheet_name
+      template_sheet_name: template_sheet_name
+      quarter_label: quarter_label
+  # 1) 社員一覧CSV読み込み（pandas相当は使わず、read_dataはExcel用のため簡易にai.process_llmでパースしてもよいが、ここではLLM無しで簡易処理想定）
+  #    今回は簡略化のため、journal/employeeはLLMで必要列抽出する例を示す
+  - id: read_employees
+    block: file.read_csv
+    in:
+      bytes: ${upload_files.uploaded.employees_csv}
+      encoding: utf-8
+      delimiter: ","
+      has_header: true
+    out:
+      rows: employees
+
+  - id: read_journal
+    block: file.read_csv
+    in:
+      bytes: ${upload_files.uploaded.journal_csv}
+      encoding: utf-8
+      delimiter: ","
+      has_header: true
+    out:
+      rows: journal_all
+
+  # 2) 期間フィルタ: 当四半期に入社した社員
+  - id: filter_joined
+    block: transforms.filter_items
+    in:
+      items: ${read_employees.employees}
+      conditions:
+        - { field: "入社日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
+    out:
+      filtered: joined_in_q
+
+  # 3) 期間フィルタ: 当四半期に退職した社員
+  - id: filter_retired
+    block: transforms.filter_items
+    in:
+      items: ${read_employees.employees}
+      conditions:
+        - { field: "退職日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
+    out:
+      filtered: retired_in_q
+
+  # 4) 退職者に対する退職給付金を突合（社員IDで結合する簡易例: ai.process_llmで紐付け）
+  - id: filter_journal_benefits
+    block: ai.process_llm
+    in:
+      evidence_data:
+        rows: ${read_journal.journal_all}
+      prompt: |
+        rows から退職給付関連の支給のみを抽出し、列: [社員ID, 退職給付金, 退職日] を持つ配列を返してください。
+        員名から社員IDを推測できる場合は社員IDに正規化してください。見つからない場合は社員IDは空文字可。
+      output_schema:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              社員ID: { type: string }
+              退職給付金: { type: number }
+              退職日: { type: string }
+        summary: { type: object }
+    out:
+      results: journal_benefits
+
+  - id: match_benefits
+    block: ai.process_llm
+    in:
+      evidence_data:
+        retirees: ${filter_retired.retired_in_q}
+        journal: ${filter_journal_benefits.journal_benefits}
+      prompt: |
+        retirees と journal を社員IDで突合し、
+        [社員ID, 氏名, 退職日, 退職給付金] の配列を返してください。見つからない場合は 退職給付金 は 0。
+      output_schema:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              社員ID: { type: string }
+              氏名: { type: string }
+              退職日: { type: string }
+              退職給付金: { type: number }
+        summary: { type: object }
+    out:
+      results: retired_benefits
+
+  # 5) Excel更新（テンプレート複製、C2セルに期末日、入社社員の追記、退社社員の行の着色+退職情報反映）
+  - id: update_workbook
+    block: excel.update_workbook
+    in:
+      workbook:
+        name: "退職給付ワークブック.xlsx"
+        bytes: ${upload_files.uploaded.workbook}
+      operations:
+        # 5-1: テンプレートシートを複製（前四半期 → 当四半期）
+        - { type: copy_sheet, sheet_name: "${compute_q.template_sheet_name}", target: "${compute_q.target_sheet_name}" }
+        # 5-2: C2セルへ期末日（YYYY-MM-DD）
+        - { type: update_cells, sheet_name: "${compute_q.target_sheet_name}", target: "C2", data: "${compute_q.period.end}" }
+        # 5-3: 入社社員の追記（B=社員ID, C=社員名(=名前), D=入社日 をテーブル末尾の次行に追加）
+        - type: append_rows_bottom
+          sheet_name: "${compute_q.target_sheet_name}"
+          rows: "${filter_joined.joined_in_q}"
+          columns:
+            "社員ID": "B"
+            "名前": "C"
+            "入社日": "D"
+        # 5-4: 退職者の既存行を社員IDで特定し、退職日/退職給付金を更新しつつ G~X 列をグレー塗り
+        - type: update_rows_by_match
+          sheet_name: "${compute_q.target_sheet_name}"
+          key: "社員ID"
+          key_column: "B"
+          items: "${match_benefits.retired_benefits.results}"
+          update_columns:
+            "退職日": "E"
+            "退職給付金": "F"
+          fill_range_columns: "B:G"
+          fill_color: "#D9D9D9"
+        # 5-5: 年度繰越時（1Q）のみ F2 をクリア（当年度支払い金額欄のリセット）
+        - { type: clear_cells_if, sheet_name: "${compute_q.target_sheet_name}", targets: ["F2"], condition: "${compute_q.is_q1}" }
+    out:
+      workbook_updated: wb
+
+
+

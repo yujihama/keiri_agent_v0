@@ -1,0 +1,67 @@
+id: excel.update_workbook
+version: 0.1.0
+entrypoint: blocks/processing/excel/update_workbook.py:ExcelUpdateWorkbookBlock
+inputs:
+  workbook:
+    type: object
+    description: "更新対象ワークブック。{name, bytes} またはbytes"
+  operations:
+    type: array
+    description: |
+      実行する更新操作の配列。
+      - { type: add_sheet, sheet_name }
+      - { type: copy_sheet, sheet_name, target }
+      - { type: update_cells, sheet_name, cells: {A1: value, ...} | target: "A1", data: value }
+      - { type: append_table, sheet_name, target: "A1", data: list[object]|dict|DataFrame }
+      - { type: append_rows_bottom, sheet_name, rows: list[object], columns: { field: "B" }, note: "rowsをテーブル最下行の次に列レター指定で追記" }
+      - { type: insert_rows, sheet_name, start_row, count }
+      - { type: update_formula, sheet_name, cells: {A1: "=SUM(B:B)", ...} }
+      - { type: clear_cells, sheet_name, targets: ["F2", "G2"] }
+      - { type: clear_cells_if, sheet_name, targets: ["F2"], condition: true }
+      - { type: format_cells, sheet_name, ranges: ["G1:X1", "G2:X2"], fill: { color: "#D9D9D9" } }
+      - { type: update_rows_by_match, sheet_name, header_row?: 1, key: "社員ID", key_column?: "B", items: list[object], update_fields: { "退職日": "退職日", "退職給付金": "退職給付金" }, update_columns?: { "退職日": "E", "退職給付金": "F" }, fill_range_columns?: "G:X", fill_color?: "#D9D9D9" }
+
+      追加予定の拡張オペレーション（定義のみ、実装は別途）:
+      - replace_in_formulas:
+          sheet_name: 対象シート名
+          range: 対象セル範囲（例: "K:K", "J3", "A1:C100"）
+          search: 置換対象パターン（文字列または正規表現）
+          replace: 置換後テキスト（Planのプレースホルダ可）
+          regex?: true | false (既定: false)
+          match_case?: true | false (既定: true)
+          condition?: true | false (既定: true)
+          note: 既存セルの数式文字列中の部分文字列を置換する汎用操作
+      - update_formula_range:
+          sheet_name: 対象シート名
+          range: 対象セル範囲（縦方向一括適用など）
+          template: 数式テンプレート（例: "='${compute_q.template_sheet_name}'!K3"）
+          fill_down?: true | false (既定: false)
+          condition?: true | false (既定: true)
+          note: 範囲に対して同一/テンプレートの数式を一括適用
+      - update_cells_if:
+          sheet_name: 対象シート名
+          condition: 真偽値（Planで解決済み）
+          cells: {A1: value, ...} | target: "A1", data: value
+          note: 条件が真の時のみ update_cells 相当を実行
+outputs:
+  workbook_updated:
+    type: object
+  workbook_b64:
+    type: string
+  summary:
+    type: object
+requirements: []
+description: |
+  既存Excelワークブックを命令列で更新する汎用ブロック。
+  追加機能:
+    - format_cells: セル/範囲の塗りつぶし
+    - append_rows_bottom: テーブル最終行の直下に列レター指定で行追記
+    - update_rows_by_match: 見出し列/列レターで行を特定し、値の更新と行の列範囲着色
+    - clear_cells: 値/数式を完全にクリア
+
+  今後の拡張（定義レベル）:
+    - replace_in_formulas: 既存数式文字列内の部分置換（正規表現/大文字小文字の制御を含む）
+    - update_formula_range: 範囲への数式テンプレート一括適用
+    - update_cells_if: 条件付きセル更新
+
+
