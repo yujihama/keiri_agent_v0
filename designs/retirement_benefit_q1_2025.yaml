@@ -69,7 +69,7 @@ graph:
 
   # 2) 期間フィルタ: 当四半期に入社した社員
   - id: filter_joined
-    block: transforms.filter_items
+    block: transforms.filter
     in:
       items: ${read_employees.employees}
       conditions:
@@ -79,7 +79,7 @@ graph:
 
   # 3) 期間フィルタ: 当四半期に退職した社員
   - id: filter_retired
-    block: transforms.filter_items
+    block: transforms.filter
     in:
       items: ${read_employees.employees}
       conditions:

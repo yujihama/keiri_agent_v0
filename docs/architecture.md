@@ -200,7 +200,7 @@ graph:
       results: results
       summary: summary
   - id: write_excel
-    block: excel.write_results
+    block: excel.write
     in:
       workbook: ${collect_inputs.collected.workbook}
       data: ${process_llm.results}

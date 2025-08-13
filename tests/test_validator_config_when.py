@@ -37,11 +37,11 @@ def test_validator_checks_when_and_config(tmp_path: Path, monkeypatch):
             ),
             Node(
                 id="p1",
-                block="excel.write_results",
+                block="excel.write",
                 inputs={
                     "workbook": {"name": "dummy.xlsx", "bytes": "${u.v.workbook}"},
-                    "data": {},
-                    "output_config": "${config.task_configs.foo}",
+                    "cell_updates": {"sheet": "Results", "cells": {"A1": 1}},
+                    "column_updates": {"sheet": "Results", "start_row": 2, "header_row": 1, "columns": ["a", "b"], "values": []},
                 },
                 outputs={"write_summary": "s"},
                 when={"expr": "1 < 2"},

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Callable, Optional
 import threading
 from time import perf_counter
+import traceback
 
 import networkx as nx
 
@@ -18,7 +19,16 @@ from core.blocks.registry import BlockRegistry
 from core.errors import BlockException
 from .models import Node, Plan
 from .config_store import get_store
-from .logger import register_log_path, write_event
+from .logger import register_log_path, write_event, export_log
+from .events import (
+    as_event_dict,
+    StartEvent,
+    NodeFinishEvent,
+    ErrorEvent,
+    ScheduleLevelEvent,
+    ScheduleLevelFinishEvent,
+    FinishSummaryEvent,
+)
 
 
 def _now_ts() -> str:
@@ -66,6 +76,80 @@ class PlanRunner:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
         return None
+
+    # ------------------ Public State API (P0) ------------------
+    def get_state(self, plan_id: str, run_id: str) -> Dict[str, Any] | None:
+        """Public: Get state dict for plan_id/run_id."""
+        path = self._state_path(plan_id, run_id)
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+        return None
+
+    def save_state(self, plan_id: str, run_id: str, state: Dict[str, Any]) -> None:
+        """Public: Save state dict for plan_id/run_id."""
+        path = self._state_path(plan_id, run_id)
+        with self._log_lock:
+            path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    def clear_state_files(self, plan_id: str) -> None:
+        """Public: Remove saved state files for a plan."""
+        d = self._state_dir / plan_id
+        if not d.exists():
+            return
+        for f in d.glob("*.state.json"):
+            try:
+                f.unlink()
+            except Exception:
+                continue
+
+    def find_latest_pending_ui(self, plan_id: str, prefer_run_id: Optional[str] = None) -> tuple[Dict[str, Any] | None, Optional[str]]:
+        """Public: Find latest pending UI entry for a plan.
+
+        Returns: (pending_ui_dict or None, run_id or None)
+        """
+        d = self._state_dir / plan_id
+        # Prefer explicit run_id
+        if prefer_run_id and d.exists():
+            f = d / f"{prefer_run_id}.state.json"
+            if f.exists():
+                try:
+                    stv = json.loads(f.read_text(encoding="utf-8"))
+                    cand = stv.get("pending_ui")
+                    if cand and not cand.get("submitted"):
+                        return cand, prefer_run_id
+                except Exception:
+                    pass
+        # Fallback: newest unsubmitted
+        if d.exists():
+            files = sorted(d.glob("*.state.json"), reverse=True)
+            for f in files:
+                try:
+                    stv = json.loads(f.read_text(encoding="utf-8"))
+                    cand = stv.get("pending_ui")
+                    if cand and not cand.get("submitted"):
+                        return cand, f.stem.replace(".state", "")
+                except Exception:
+                    continue
+        return None, None
+
+    # ------------------ Internal helpers ------------------
+    def _record_success(self, plan: Plan, run_id: str, node_id: str) -> None:
+        """Record a node id into success_nodes in state."""
+        try:
+            cur = self._load_state(plan, run_id) or {}
+            succ = cur.get("success_nodes")
+            if isinstance(succ, list):
+                sset = set(str(x) for x in succ)
+            else:
+                sset = set()
+            sset.add(str(node_id))
+            cur["success_nodes"] = sorted(list(sset))
+            self._save_state(plan, run_id, cur)
+        except Exception:
+            pass
 
     def _write_event(self, path: Path, event: Dict[str, Any]) -> None:
         # Deprecated in favor of core.plan.logger.write_event
@@ -152,13 +236,39 @@ class PlanRunner:
             plan_spec = plan.model_dump(by_alias=True)
         except Exception:
             plan_spec = None
-        emit({
-            "type": "start",
-            "run_id": run_id,
-            "plan": plan.id,
-            "parent_run_id": parent_run_id,
-            "plan_spec": plan_spec,
-        })
+        emit(as_event_dict(StartEvent(run_id=run_id, plan=plan.id, parent_run_id=parent_run_id, plan_spec=plan_spec)))
+
+        # Summarizer for debug logging to avoid dumping raw bytes/huge payloads
+        def _summarize_for_log(value: Any, depth: int = 0) -> Any:
+            try:
+                if depth > 3:
+                    return "<depth_limit>"
+                if isinstance(value, (bytes, bytearray)):
+                    return {"__type": "bytes", "len": len(value)}
+                if isinstance(value, str):
+                    s = value
+                    return s if len(s) <= 200 else (s[:200] + "…")
+                if isinstance(value, dict):
+                    out: Dict[str, Any] = {}
+                    cnt = 0
+                    for k, v in value.items():
+                        out[str(k)] = _summarize_for_log(v, depth + 1)
+                        cnt += 1
+                        if cnt >= 50:
+                            out["__truncated__"] = True
+                            break
+                    return out
+                if isinstance(value, (list, tuple)):
+                    arr = []
+                    for i, v in enumerate(value):
+                        if i >= 50:
+                            arr.append("<truncated>")
+                            break
+                        arr.append(_summarize_for_log(v, depth + 1))
+                    return arr
+                return value
+            except Exception:
+                return "<unserializable>"
 
         g = self._build_graph(plan)
         order = list(nx.topological_sort(g))
@@ -371,11 +481,7 @@ class PlanRunner:
         for _, nodes in sorted(indegree_levels.items(), key=lambda kv: kv[0]):
             # Emit scheduling info per level
             try:
-                emit({
-                    "type": "schedule_level_start",
-                    "run_id": run_id,
-                    "nodes": list(nodes),
-                })
+                emit(as_event_dict(ScheduleLevelEvent(nodes=list(nodes))))
             except Exception:
                 pass
             ui_layout = plan.ui.layout if (plan.ui and plan.ui.layout) else []
@@ -657,6 +763,15 @@ class PlanRunner:
                             if not force_ui and str(nid) in completed_map:
                                 out = _decode_from_json(completed_map[str(nid)])
                                 emit({"type": "ui_reuse", "run_id": run_id, "node": nid})
+                                try:
+                                    export_log({
+                                        "phase": "reuse",
+                                        "node": nid,
+                                        "block": node.block,
+                                        "outputs": _summarize_for_log(out),
+                                    }, run_id=run_id, node_id=nid, tag="runner.block")
+                                except Exception:
+                                    pass
                             elif not force_ui and pending_ui and pending_ui.get("node_id") == nid and pending_ui.get("submitted"):
                                 out = _decode_from_json(pending_ui.get("outputs", {}))
                                 # move to completed map and clear pending
@@ -665,6 +780,15 @@ class PlanRunner:
                                 state["pending_ui"] = None
                                 self._save_state(plan, run_id, state)
                                 emit({"type": "ui_submit", "run_id": run_id, "node": nid})
+                                try:
+                                    export_log({
+                                        "phase": "submit",
+                                        "node": nid,
+                                        "block": node.block,
+                                        "outputs": _summarize_for_log(out),
+                                    }, run_id=run_id, node_id=nid, tag="runner.block")
+                                except Exception:
+                                    pass
                             else:
                                 # 強制UI表示時は、過去の保存を無視して pending を再生成
                                 if force_ui:
@@ -684,13 +808,40 @@ class PlanRunner:
                                 state["pending_ui"] = form_info
                                 self._save_state(plan, run_id, state)
                                 emit({"type": "ui_wait", "run_id": run_id, "node": nid})
+                                try:
+                                    export_log({
+                                        "phase": "wait",
+                                        "node": nid,
+                                        "block": node.block,
+                                        "inputs": _summarize_for_log(inputs),
+                                    }, run_id=run_id, node_id=nid, tag="runner.block")
+                                except Exception:
+                                    pass
                                 return results_by_alias
                         else:
                             emit({"type": "node_start", "run_id": run_id, "node": nid})
                             _t0 = perf_counter()
+                            try:
+                                export_log({
+                                    "phase": "start",
+                                    "node": nid,
+                                    "block": node.block,
+                                    "inputs": _summarize_for_log(inputs),
+                                }, run_id=run_id, node_id=nid, tag="runner.block")
+                            except Exception:
+                                pass
                             out = block.render(ctx, inputs)
                             elapsed_ms = int((perf_counter() - _t0) * 1000)
                             emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
+                            try:
+                                export_log({
+                                    "phase": "finish",
+                                    "node": nid,
+                                    "block": node.block,
+                                    "outputs": _summarize_for_log(out),
+                                }, run_id=run_id, node_id=nid, tag="runner.block")
+                            except Exception:
+                                pass
 
                         for local_out, alias in node.outputs.items():
                             if isinstance(out, dict) and local_out in out:
@@ -710,6 +861,15 @@ class PlanRunner:
                             attempt = 0
                             last_err = None
                             _t0 = perf_counter()
+                            try:
+                                export_log({
+                                    "phase": "start",
+                                    "node": node_id,
+                                    "block": node.block,
+                                    "inputs": _summarize_for_log(inputs_dict),
+                                }, run_id=run_id, node_id=node_id, tag="runner.block")
+                            except Exception:
+                                pass
                             while attempt <= retries:
                                 try:
                                     # timeout handling via thread future
@@ -720,6 +880,15 @@ class PlanRunner:
                                     else:
                                         out = block_obj.run(ctx, inputs_dict)
                                     elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                    try:
+                                        export_log({
+                                            "phase": "finish",
+                                            "node": node_id,
+                                            "block": node.block,
+                                            "outputs": _summarize_for_log(out),
+                                        }, run_id=run_id, node_id=node_id, tag="runner.block")
+                                    except Exception:
+                                        pass
                                     return node_id, out, elapsed_ms, attempt + 1
                                 except Exception as e:  # noqa: BLE001
                                     last_err = e
@@ -740,6 +909,7 @@ class PlanRunner:
                                             "exception_type": type(e).__name__,
                                             "exception_args": getattr(e, "args", ()),
                                             "input_keys": sorted(list(inputs_dict.keys())) if isinstance(inputs_dict, dict) else [],
+                                            "traceback": "".join(traceback.format_exception_only(type(e), e))[:2000],
                                         }
                                     emit({
                                         "type": "error",
@@ -779,6 +949,11 @@ class PlanRunner:
                             results_by_alias[alias] = out[local_out]
                     results_by_node[node_id] = dict(out)
                     emit({"type": "node_finish", "run_id": run_id, "node": node_id, "elapsed_ms": elapsed_ms, "attempts": attempts})
+                    # Flow図の成功状態を永続
+                    try:
+                        self._record_success(plan, run_id, node_id)
+                    except Exception:
+                        pass
                     executed_in_level.append(node_id)
                 # If there were deferred nodes, execute them now sequentially (improved fallback)
                 if deferred_nodes:
@@ -838,6 +1013,10 @@ class PlanRunner:
                                     results_by_alias[alias] = out[local_out]
                             results_by_node[nid] = dict(out)
                             emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": 0, "attempts": 1})
+                            try:
+                                self._record_success(plan, run_id, nid)
+                            except Exception:
+                                pass
                             remaining.remove(nid)
                             made_progress = True
                             executed_in_level.append(nid)
@@ -915,11 +1094,7 @@ class PlanRunner:
                         leftover = [n for n in (deferred_nodes or []) if n not in executed_in_level]
                     except Exception:
                         leftover = []
-                    emit({
-                        "type": "schedule_level_finish",
-                        "executed": executed_in_level,
-                        "leftover": leftover,
-                    })
+                    emit(as_event_dict(ScheduleLevelFinishEvent(executed=executed_in_level, leftover=leftover)))
                 except Exception:
                     pass
         # Global re-evaluation pass: try to execute any remaining nodes whose
@@ -927,10 +1102,7 @@ class PlanRunner:
         try:
             remaining = [nid for nid in order if nid not in results_by_node]
             if remaining:
-                emit({
-                    "type": "schedule_global_pass_start",
-                    "nodes": list(remaining),
-                })
+                emit({"type": "schedule_global_pass_start", "nodes": list(remaining)})
                 executed_global: List[str] = []
                 def _dep_unresolved(val: Any) -> bool:
                     if isinstance(val, str) and val.startswith("${") and val.endswith("}"):
@@ -992,6 +1164,15 @@ class PlanRunner:
                                 attempt = 0
                                 last_err = None
                                 _t0 = perf_counter()
+                                try:
+                                    export_log({
+                                        "phase": "start",
+                                        "node": node_id,
+                                        "block": node.block,
+                                        "inputs": _summarize_for_log(inputs_dict),
+                                    }, run_id=run_id, node_id=node_id, tag="runner.block")
+                                except Exception:
+                                    pass
                                 while attempt <= retries:
                                     try:
                                         if timeout_ms and timeout_ms > 0:
@@ -1001,6 +1182,15 @@ class PlanRunner:
                                         else:
                                             out = block_inst.run(ctx, inputs_dict)
                                         elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                        try:
+                                            export_log({
+                                                "phase": "finish",
+                                                "node": node_id,
+                                                "block": node.block,
+                                                "outputs": _summarize_for_log(out),
+                                            }, run_id=run_id, node_id=node_id, tag="runner.block")
+                                        except Exception:
+                                            pass
                                         return node_id, out, elapsed_ms, attempt + 1
                                     except Exception as e:  # noqa: BLE001
                                         last_err = e
@@ -1020,6 +1210,7 @@ class PlanRunner:
                                                 "exception_type": type(e).__name__,
                                                 "exception_args": getattr(e, "args", ()),
                                                 "input_keys": sorted(list(inputs_dict.keys())) if isinstance(inputs_dict, dict) else [],
+                                                "traceback": "".join(traceback.format_exception_only(type(e), e))[:2000],
                                             }
                                         emit({
                                             "type": "error",
@@ -1052,14 +1243,14 @@ class PlanRunner:
                                     results_by_alias[alias] = out[local_out]
                             results_by_node[nid] = dict(out)
                             emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": attempts})
+                            try:
+                                self._record_success(plan, run_id, nid)
+                            except Exception:
+                                pass
                         remaining.remove(nid)
                         executed_global.append(nid)
                         made_progress = True
-                emit({
-                    "type": "schedule_global_pass_finish",
-                    "executed": executed_global,
-                    "leftover": [n for n in remaining if n not in executed_global],
-                })
+                emit({"type": "schedule_global_pass_finish", "executed": executed_global, "leftover": [n for n in remaining if n not in executed_global]})
         except Exception:
             pass
 
@@ -1071,6 +1262,20 @@ class PlanRunner:
                     "type": "plan_unexecuted_nodes",
                     "nodes": not_executed,
                 })
+        except Exception:
+            pass
+        try:
+            total_nodes = len(order)
+            success_nodes = len(results_by_node)
+            summary = FinishSummaryEvent(
+                total_nodes=total_nodes,
+                success_nodes=success_nodes,
+                skipped_nodes=0,
+                error_nodes=0,
+                total_elapsed_ms=0,
+                total_retries=0,
+            )
+            emit(as_event_dict(summary))
         except Exception:
             pass
         emit({"type": "finish", "run": run_id, "plan": plan.id})

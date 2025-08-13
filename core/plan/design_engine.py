@@ -161,10 +161,11 @@ def _build_fallback_plan(
         },
         {
             "id": "extract_zip",
-            "block": "transforms.pick_bytes",
+            "block": "transforms.pick",
             "in": {
                 "source": "${upload_evidence.evidence_data}",
-                "path": "evidence_zip"
+                "path": "evidence_zip",
+                "return": "bytes"
             },
             "out": {"value": "zip_bytes"},
         },
@@ -206,23 +207,21 @@ def _build_fallback_plan(
         },
         {
             "id": "extract_workbook",
-            "block": "transforms.pick_bytes",
+            "block": "transforms.pick",
             "in": {
                 "source": "${upload_excel.excel_data}",
-                "path": "workbook"
+                "path": "workbook",
+                "return": "bytes"
             },
             "out": {"value": "workbook_bytes"},
         },
         {
             "id": "excel_write",
-            "block": "excel.write_results",
+            "block": "excel.write",
             "in": {
-                # 型検証を満たすため、ワークブックは {name, bytes} 形式で渡す
                 "workbook": {"name": "uploaded.xlsx", "bytes": "${extract_workbook.workbook_bytes}"},
                 "cell_updates": "${vars.excel_cell_updates}",
-                "column_updates": {"sheet": "${vars.excel_column_updates.sheet}", "start_row": "${vars.excel_column_updates.start_row}", "column_map": "${vars.excel_column_updates.column_map}", "values": []},
-                "data": {},
-                "output_config": "${vars.output_config}",
+                "column_updates": {"sheet": "${vars.excel_column_updates.sheet}", "start_row": "${vars.excel_column_updates.start_row}", "header_row": 1, "columns": [], "values": []}
             },
             "out": {
                 "write_summary": "write_summary",
@@ -325,7 +324,7 @@ def _generate_plan_llm(
         "3. ai.process_llmでは 'output_schema'(非空オブジェクト) を必須、さらに 'prompt' または 'instruction' の少なくとも一方を指定\n"
         "4. 型の整合性: 各ブロックの入力型（object/array/string等）を厳守\n"
         "5. Excel出力時は必ず入力用のExcelファイルアップロードUIを作成\n"
-        "6. 列出力は excel.write_results の column_updates を使用し、'column_map'（ヘッダ名→列記号）または 'columns'（ヘッダ→パス）を指定\n"
+        "6. 列出力は excel.write の column_updates を使用し、'columns'（ヘッダ→パス）または配列形式で指定（ヘッダは自動書込）\n"
         "7. サンプルごとの処理にはforeachループを使用"
     )
 
@@ -379,9 +378,8 @@ def _generate_plan_llm(
 - 型の整合性を厳守: 各入力の期待される型（object/array/string等）に合わせる
 - ai.process_llmの'evidence_data'はobject型、'prompt'と'output_schema'は必須
   - output_schemaはオブジェクト形式で記述（例: {{field1: string, field2: number}}）、文字列で囲まない（空不可）
-  - excel.write_resultsを使う場合、必ずExcelファイル入力UIを先に作成。列は以下いずれかで指定:
-      a) column_map: {{ <headerName>: "A"|1, ... }} と values でデータ渡し（推奨: headerName = フィールド名）
-      b) columns: {{ <headerName>: <dataPath>, ... }} または [{{"header": <headerName>, "path": <dataPath>}}]（列位置は自動）
+  - Excel出力は excel.write を使用。必ずExcelファイル入力UIを先に作成。
+      columns: {{ <headerName>: <dataPath>, ... }} または [{"header": <headerName>, "path": <dataPath>}] を指定し、values にデータ配列を渡す
     """
 
     model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"

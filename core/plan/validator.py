@@ -379,8 +379,7 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
             instr_v = n.inputs.get("instruction") if isinstance(n.inputs, dict) else None
             if not (isinstance(prompt_v, str) and prompt_v.strip()) and not (isinstance(instr_v, str) and instr_v.strip()):
                 errors.append(f"Node {n.id}: ai.process_llm requires 'prompt' or 'instruction'")
-        # excel.write_results: 互換性のため column_updates の必須チェックは行わない
-        # - 旧スタイル: data + output_config のみでも許容する
+        # 旧 excel.write_results は廃止（特例検証は不要）
 
     # 4) DAG cycle check
     if not nx.is_directed_acyclic_graph(g):
@@ -392,24 +391,7 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
             if nid not in node_ids:
                 errors.append(f"UI layout references unknown node id: {nid}")
 
-    # 6) Excel疎通の簡易ドライラン検証（出力設定の基本形）
-    # excel.write_results の output_config が ${vars.*} を指している場合、基本キーの存在と型を確認
-    for n in plan.graph:
-        if n.block == "excel.write_results":
-            cfg_ref = n.inputs.get("output_config") if isinstance(n.inputs, dict) else None
-            if isinstance(cfg_ref, str) and cfg_ref.startswith("${vars.") and cfg_ref.endswith("}"):
-                var_key = cfg_ref[7:-1]
-                oc = plan.vars.get(var_key)
-                if not isinstance(oc, dict):
-                    errors.append(f"Node {n.id}: vars.{var_key} must be an object for output_config")
-                else:
-                    if "sheet" not in oc or not isinstance(oc.get("sheet"), str):
-                        errors.append(f"Node {n.id}: output_config.sheet must be string")
-                    if "start_row" not in oc or not isinstance(oc.get("start_row"), int):
-                        errors.append(f"Node {n.id}: output_config.start_row must be int")
-                    cols = oc.get("columns")
-                    if not isinstance(cols, list) or not all(isinstance(c, str) for c in cols):
-                        errors.append(f"Node {n.id}: output_config.columns must be list[str]")
+    # 6) Excel疎通の簡易ドライラン検証（excel.write は実行時に整合性を確認するため特例不要）
 
     return errors
 
@@ -498,42 +480,7 @@ def dry_run_plan(plan: Plan, registry: BlockRegistry) -> bool:
             sample = _sample_for_type(out_schema.get("type"))
             produced[(node_id, alias)] = sample
 
-    # Excel 書込ブロックの簡易ドライラン（ワークブック生成→書込可能性確認）
-    for n in plan.graph:
-        if n.block == "excel.write_results":
-            try:
-                # 1) ワークブックダミー作成
-                from openpyxl import Workbook as _WB
-                from io import BytesIO as _BIO
-                wb = _WB()
-                ws = wb.active
-                ws.title = "Results"
-                bio = _BIO()
-                wb.save(bio)
-                bio.seek(0)
-                wb_bytes = bio.getvalue()
-
-                # 2) 出力設定の決定（vars 参照→辞書→既定）
-                oc = {"sheet": "Results", "start_row": 2, "columns": ["A", "B", "C"]}
-                cfg_ref = n.inputs.get("output_config") if isinstance(n.inputs, dict) else None
-                if isinstance(cfg_ref, str) and cfg_ref.startswith("${vars.") and cfg_ref.endswith("}"):
-                    var_key = cfg_ref[7:-1]
-                    var_val = plan.vars.get(var_key)
-                    if isinstance(var_val, dict):
-                        oc = var_val
-                elif isinstance(cfg_ref, dict):
-                    oc = cfg_ref
-
-                # 3) ダミーデータ（列マッピングに依存しない最小形）
-                data = {}
-
-                # 4) ブロック実行（メモリ上）
-                from core.blocks.base import BlockContext
-                block = registry.get("excel.write_results")
-                ctx = BlockContext(run_id="dryrun", workspace=str(Path.cwd()), vars=dict(plan.vars))
-                _ = block.run(ctx, {"workbook": {"name": "dryrun.xlsx", "bytes": wb_bytes}, "data": data, "output_config": oc})
-            except Exception as e:  # pragma: no cover (失敗時のみ)
-                raise ValueError(f"Dry-run for excel.write_results failed: {e}")
+    # Excel 書込の特例ドライランは不要（excel.write は正常性を内包検証）
 
     return True
 

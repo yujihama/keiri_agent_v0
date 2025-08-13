@@ -31,7 +31,7 @@
 ### ui.interactive_input 0.1.0
 - **ファイル**: `core/blocks/ui/interactive_input.py`
 - **用途**: 統合入力UI。モード別の動作を提供。
-- **モード**:
+- **モード**: 
   - `collect`: 要件配列 `requirements[{id,type,label,required,hint,options,...}]` に基づくフォーム確定方式（確定まで出力抑制）。
   - `confirm`: 承認/却下とコメント。
   - `inquire`: LLMで質問生成・値抽出（必須充足まで対話）。
@@ -71,9 +71,9 @@
 #### excel.read_data 0.1.0
 - **ファイル**: `core/blocks/processing/excel/read_data.py`
 - **用途**: ワークブックからシート別に行配列へ抽出。
-- **入力**: `workbook{bytes|path|{name,bytes|path}}`, `read_config{header_row,skip_empty_rows,date_as_iso,sheets[]}`, `recalc{enabled,engine:"libreoffice"|"pycel",soffice_path,timeout_sec}`。
-- **出力**: `data{<sheet>->[row...]}`, `summary{sheets,rows{sheet->n},recalc{enabled,status}}`。
-- **備考**: 再計算は LibreOffice/pycel に対応。失敗時は例外（フォールバックなし）。
+- **入力**: `workbook{bytes|path|{name,bytes|path}}`, `read_config{mode?: single|multi, header_row, skip_empty_rows, date_as_iso, sheets[]}`, `recalc{enabled,engine:"libreoffice"|"pycel",soffice_path,timeout_sec}`。
+- **出力**: `data{<sheet>->[row...]}`, `rows`(mode=single時), `summary{sheets,rows{sheet->n},recalc{enabled,status},mode}`。
+- **備考**: 既定は `mode=single` でトップレベル `rows` も返す。再計算は LibreOffice/pycel に対応。失敗時は例外（フォールバックなし）。
 
 #### excel.update_workbook 0.1.0
 - **ファイル**: `core/blocks/processing/excel/update_workbook.py`
@@ -81,13 +81,18 @@
 - **主な操作**: `add_sheet`, `copy_sheet`, `update_cells`, `append_table`, `append_rows_bottom`, `insert_rows`, `update_formula`, `update_rows_by_match`, `format_cells`, `update_cells_if`, `update_formula_range`, `replace_in_formulas`, `clear_cells`, `clear_cells_if`。
 - **出力**: `workbook_updated{name,bytes}`, `workbook_b64`, `summary{operations,cells_updated,cells_formatted,rows_updated}`。
 
-#### excel.write_results 0.1.0
-- **ファイル**: `core/blocks/processing/excel/write_results.py`
-- **用途**: セル更新/列更新に特化した書き込みユーティリティ。
-- **入力（推奨）**:
-  - `cell_updates`: `{"sheet"?, "cells": {"A1": val, ...}} | [{...}] | {"A1": val, ...}`。
-  - `column_updates`: `{"sheet"?, "start_row"?, "header_row"?, "columns":[{header,path}|...], "values": list|dict|DataFrame, "write_header"?, "clear_existing"?}`（配列可）。
-- **出力**: `write_summary{rows_written,sheet,workbook_name}`, `workbook_updated`, `workbook_b64`。
+#### excel.write 0.1.0
+- **ファイル**: `core/blocks/processing/excel/write.py`
+- **用途**: セル更新・列更新・キー一致更新（行塗り含む）を統一スキーマで実施。
+- **入力**:
+  - `cell_updates`: `{sheet?, cells:{"A1": val, ...}} | [{...}]`
+  - `column_updates`: `{sheet?, header_row?, start_row?, append?, write_header?, clear_existing?, columns:[{header,path}], values}` | `[{...}]`
+  - `match_updates`: `{sheet?, key_column, key_field, start_row?, items, update_columns:{src_field: col}, fill_range_columns?, fill_color?}` | `[{...}]`
+- **出力**: `write_summary{rows_written,sheet,workbook_name}`, `workbook_updated{name,bytes}`, `workbook_b64`。
+- **備考**: `append:true` で最終行の直下に追記。`match_updates` により `update_rows_by_match` 相当の更新と行塗りをサポート。
+
+#### excel.write_results 0.1.0（削除予定）
+- 現行は `excel.write` を使用してください。
 
 ### Table
 
@@ -112,18 +117,18 @@
 - **入力**: `fiscal_year`, `quarter(Q1..Q4|1..4)`, `start_month=4`。
 - **出力**: `period{start,end}`, `is_q1`, `target_sheet_name`, `template_sheet_name`, `quarter_label`。
 
-#### transforms.filter_items 0.1.0
-- **ファイル**: `core/blocks/processing/transforms/filter_items.py`
-- **用途**: 条件に基づくレコードフィルタ。
+#### transforms.filter 0.1.0
+- **ファイル**: `core/blocks/processing/transforms/filter.py`
+- **用途**: 統一フィルタブロック。
 - **入力**: `items`, `conditions[{field,operator,value[,value2]}]`, `options{case_insensitive=true}`。
 - **演算子**: `eq, ne, gt, gte, lt, lte, contains, in, between`。
 - **出力**: `filtered`, `excluded`, `summary`。
 
-#### transforms.filter_keyword 0.1.0
-- **ファイル**: `core/blocks/processing/transforms/filter_keyword.py`
-- **用途**: 指定フィールド内のキーワードヒットでフィルタ。
-- **入力**: `items`, `fields[]`, `keywords[]`, `case_insensitive=true`。
-- **出力**: `filtered`, `excluded`, `summary`。
+#### transforms.filter_items 0.1.0（削除予定）
+- 現行は `transforms.filter` を使用してください。
+
+#### transforms.filter_keyword（削除）
+- `transforms.filter` に統合済み。今後は `transforms.filter` を使用してください。
 
 #### transforms.flatten_items 0.1.0
 - **ファイル**: `core/blocks/processing/transforms/flatten_items.py`
@@ -137,11 +142,14 @@
 - **入力**: `evidence`, `level("top_dir"|"second_dir"|"auto")`, `instruction?`。
 - **出力**: `groups[{key,evidence,instruction?}]`。
 
-#### transforms.pick_bytes / transforms.pick_object 各 0.1.0
-- **ファイル**: `core/blocks/processing/transforms/pick_value.py`
-- **用途**: `source` から `path` で値を抽出。`pick_bytes` は bytes/base64、`pick_object` は任意型を返す。
-- **入力**: `source`, `path`。
+#### transforms.pick 0.1.0
+- **ファイル**: `core/blocks/processing/transforms/pick.py`
+- **用途**: ドットパスで値を抽出し、指定型で返す。
+- **入力**: `source`, `path`, `return: bytes|object|string|number|boolean`, `base64?`（bytes時）
 - **出力**: `value`。
+
+#### transforms.pick_bytes / transforms.pick_object 0.1.0（削除予定）
+- 現行は `transforms.pick` を使用してください。
 
 ---
 
@@ -151,10 +159,10 @@
 ```
 1) ui.interactive_input（ファイル/期間などの収集）
 2) excel.read_data / file.parse_zip_2tier / file.read_csv（データ取り込み）
-3) transforms.filter_items / filter_keyword（抽出）
+3) transforms.filter（抽出）
 4) ai.process_llm（業務ロジック/構造化出力）
 5) ui.interactive_input: confirm（確認・修正）
-6) excel.update_workbook / excel.write_results（成果物出力）
+6) excel.write（基本）/ excel.update_workbook（高度な式/置換/書式）
 ```
 
 ### foreach での分割処理
@@ -175,7 +183,7 @@
 
 ## 改善提案（統廃合/分割/整合性）
 
-- **Excel書き込みの統合**: `excel.update_workbook` と `excel.write_results` の操作DSLを一本化し、`excel.write`（セル/列/表/数式/装飾/条件/行マッチ更新）に集約。現ブロックは互換ラッパとして維持。
+- **Excel書き込みの統合（実施済み一部）**: `excel.write` を追加し、セル/列と `match_updates`（行マッチ更新＋塗り）を統合。`excel.write_results` は互換用途に限定。`excel.update_workbook` は式置換・高度なフォーマット等の上位機能として残置。
 - **フィルタの統合**: `transforms.filter_items` と `transforms.filter_keyword` を `transforms.filter` に統合し、AND/OR、正規表現、配列含有、大小比較/範囲/部分一致を単一DSLで表現。
 - **値抽出の統合**: `transforms.pick_bytes`/`pick_object` を `transforms.pick_value` に統合し、`as: bytes|object|string|json|number|boolean` で型変換/デコード（base64等）を指定可能に。現ファイル名とIDの不一致も解消。
 - **表データI/Oの整合**: `file.read_csv` と `excel.read_data` の出力スキーマを統一（例: どちらも `rows` または `data{sheet->rows}` を返す規約）。拡張として `io.read_tabular` を提案。
@@ -191,9 +199,7 @@
 ## 実装優先度（提案）
 
 ### Phase 1（高）
-- **excel.read_data**（安定化/検証強化）
-- **excel.write（統合）** への移行計画と互換レイヤ
-- **transforms.filter（統合）** DSL設計と実装
+- 実施済み: `excel.write` 実装（cell/column/match_updates）、`transforms.filter`/`transforms.pick` 追加、`excel.read_data` に single/multi を追加
 
 ### Phase 2（中）
 - **ai.inquire_collect**（UI分離）
@@ -212,6 +218,5 @@
 - **汎用性**: 業務固有ロジックは `instruction`/設定に外部化し、ブロック自体は単一責務・再利用可能に保つ。
 - **組み合わせやすさ**: 入出力のキー/構造を明確化し、大小文字無視のキー探索やパス解決等で堅牢性を担保。
 - **型安全/構造化**: LLM出力は Plan の `output_schema` で厳密化し、Pydantic でバリデーション。
-- **後方互換**: 新DSLへの移行時は互換ラッパ/自動変換を用意し、段階的に統合。
 
 

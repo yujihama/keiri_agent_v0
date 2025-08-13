@@ -75,7 +75,7 @@ graph:
   # 2) 期間フィルタ: 当四半期に入社した社員（給与明細表）
   - id: filter_joined
     description: 当四半期に入社した社員を抽出
-    block: transforms.filter_items
+    block: transforms.filter
     in:
       items: ${read_salary.salary_rows}
       conditions:
@@ -86,7 +86,7 @@ graph:
   # 3) 期間フィルタ: 当四半期に退職した社員（給与明細表）
   - id: filter_retired
     description: 当四半期に退職した社員を抽出
-    block: transforms.filter_items
+    block: transforms.filter
     in:
       items: ${read_salary.salary_rows}
       conditions:
@@ -183,16 +183,17 @@ graph:
   # 動的シート名の行配列を抽出
   - id: pick_current_sheet_rows
     description: 対象シートの行配列を取得
-    block: transforms.pick_array
+    block: transforms.pick
     in:
       source: ${read_updated_sheet.current_sheet_data}
       path: ${compute_q.target_sheet_name}
+      return: object
     out:
       value: current_sheet_rows
 
   - id: filter_marked_retirees
     description: 支給確認フラグが●の行を抽出
-    block: transforms.filter_items
+    block: transforms.filter
     in:
       items: ${pick_current_sheet_rows.current_sheet_rows}
       conditions:

@@ -34,7 +34,7 @@ graph:
     metadata: metadata
 - id: extract_zip
   description: ZIPファイルを確認
-  block: transforms.pick_bytes
+  block: transforms.pick
   in:
     source: ${ui_file_input.collected_data}
     path: evidence_zip
@@ -42,7 +42,7 @@ graph:
     value: value
 - id: extract_workbook
   description: 出力先Excelファイルを確認
-  block: transforms.pick_bytes
+  block: transforms.pick
   in:
     source: ${ui_file_input.collected_data}
     path: input_workbook
@@ -123,7 +123,7 @@ graph:
       version: 0.1.0
       graph:
       - id: pick_results
-        block: transforms.pick_object
+        block: transforms.pick
         in:
           source: ${vars.result_dict}
           path: results
@@ -133,7 +133,7 @@ graph:
   policy: null
 - id: write_excel
   description: Excelに書き出す
-  block: excel.write_results
+  block: excel.write
   in:
     cell_updates:
       sheet: Results

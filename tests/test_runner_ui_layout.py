@@ -41,11 +41,11 @@ def test_ui_nodes_respect_ui_layout_order(tmp_path: Path, monkeypatch):
             ),
             Node(
                 id="proc",
-                block="excel.write_results",
+                block="excel.write",
                 inputs={
                     "workbook": {"name": "dummy.xlsx", "bytes": "${u2.wb_data.workbook}"},
-                    "data": "${u1.zip_data}",
-                    "output_config": {"sheet": "Results", "start_row": 2, "columns": ["A", "B", "C"]},
+                    "cell_updates": {"sheet": "Results", "cells": {"A1": "File", "B1": "Count", "C1": "Sum"}},
+                    "column_updates": {"sheet": "Results", "start_row": 2, "header_row": 1, "columns": ["file", "count", "sum"], "values": []},
                 },
                 outputs={"write_summary": "ok"},
             ),

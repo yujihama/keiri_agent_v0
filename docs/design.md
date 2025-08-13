@@ -475,7 +475,7 @@ keiri_agent/
 │   │   │   │   └── parse_zip_2tier.py
 │   │   │   └── transforms/
 │   │   │       ├── flatten_items.py
-│   │   │       └── pick_value.py
+│   │   │       └── pick.py
 │   │   └── ui/
 │   │       └── interactive_input.py # 中核UIブロック
 │   ├── plan/
@@ -493,7 +493,7 @@ keiri_agent/
 ├── block_specs/                    # ブロック仕様定義（YAML）
 │   ├── processing/
 │   │   ├── ai.process_llm.yaml
-│   │   ├── excel.write_results.yaml
+│   │   ├── excel.write.yaml
 │   │   └── file.parse_zip_2tier.yaml
 │   └── ui/
 │       └── ui.interactive_input.yaml
@@ -628,3 +628,10 @@ keiri_agent/
 8. **セキュリティ**: 入力検証とアクセス制御の徹底
 
 
+
+## 関連ドキュメント
+
+- 将来像と差別化: `docs/future_vision.md`
+- ロードマップ（概要/具体）: `docs/roadmap.md`
+- 監査・内部監査・内部統制向け拡張設計: `docs/audit_and_controls.md`
+ - ビジネスユースケース集: `docs/use_cases.md`
