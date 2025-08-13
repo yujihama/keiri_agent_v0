@@ -1,0 +1,25 @@
+id: transforms.filter
+version: 0.1.0
+entrypoint: blocks/processing/transforms/filter.py:FilterBlock
+inputs:
+  items:
+    type: array
+    description: "list[object]"
+  conditions:
+    type: array
+    description: "[{ field, operator, value, value2? }]"
+  options:
+    type: object
+    description: "{ case_insensitive?: bool }"
+outputs:
+  filtered:
+    type: array
+  excluded:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  条件に基づいて配列をフィルタする統一ブロック。演算子は eq/ne/gt/gte/lt/lte/contains/in/between のみ。
+
+

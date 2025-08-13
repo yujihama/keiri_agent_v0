@@ -8,6 +8,7 @@ from typing import List
 import os
 import yaml
 from contextlib import contextmanager
+import tempfile
 
 # Load environment variables from .env file
 try:
@@ -93,6 +94,38 @@ def _disable_headless_for_ui():
                 os.environ.pop("KEIRI_AGENT_HEADLESS", None)
             else:
                 os.environ["KEIRI_AGENT_HEADLESS"] = prev
+        except Exception:
+            pass
+
+
+def _now_tmp_yaml_path() -> Path:
+    return Path(tempfile.mkstemp(prefix=".tmp_plan_", suffix=".yaml", dir=str(Path.cwd()))[1])
+
+
+def validate_and_dryrun(yaml_text: str, registry: BlockRegistry, *, do_dryrun: bool = True):
+    """YAMLテキストを一時ファイルに書き、load→validate→(任意)dry_run を一括実行。
+
+    戻り値: (plan, errors_list, dryrun_exception)
+    - plan: 読み込めたPlan（検証エラーがあっても返す場合あり）
+    - errors_list: 検証エラーのリスト（なければ空）
+    - dryrun_exception: ドライラン時の例外（なければNone）
+    """
+    tmp = _now_tmp_yaml_path()
+    try:
+        tmp.write_text(yaml_text, encoding="utf-8")
+        plan = load_plan(tmp)
+        errors = validate_plan(plan, registry)
+        dr_err = None
+        if not errors and do_dryrun:
+            try:
+                dry_run_plan(plan, registry)
+            except Exception as e:  # noqa: BLE001
+                dr_err = e
+        return plan, errors or [], dr_err
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
         except Exception:
             pass
 
@@ -202,31 +235,20 @@ def main():
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("検証"):
-                try:
-                    tmp = Path(".tmp_plan.yaml")
-                    tmp.write_text(yaml_text, encoding="utf-8")
-                    plan = load_plan(tmp)
-                    errors = validate_plan(plan, registry)
-                    if errors:
-                        st.error("\n".join(errors))
-                    else:
-                        st.success("検証OK")
-                finally:
-                    if tmp.exists():
-                        tmp.unlink()
+                _plan, errors, _ = validate_and_dryrun(yaml_text, registry, do_dryrun=False)
+                if errors:
+                    st.error("\n".join(errors))
+                else:
+                    st.success("検証OK")
         with col2:
             if st.button("ドライラン"):
-                try:
-                    tmp = Path(".tmp_plan.yaml")
-                    tmp.write_text(yaml_text, encoding="utf-8")
-                    plan = load_plan(tmp)
-                    dry_run_plan(plan, registry)
+                _plan, errors, dr_err = validate_and_dryrun(yaml_text, registry, do_dryrun=True)
+                if errors:
+                    st.error("\n".join(errors))
+                elif dr_err is not None:
+                    st.error(str(dr_err))
+                else:
                     st.success("ドライランOK")
-                except Exception as e:
-                    st.error(str(e))
-                finally:
-                    if tmp.exists():
-                        tmp.unlink()
         with col3:
             if st.button("保存"):
                 Path(plan_path).write_text(yaml_text, encoding="utf-8")
@@ -299,49 +321,32 @@ def main():
             colv, colr = st.columns(2)
             with colv:
                 if st.button("検証/ドライラン"):
-                    try:
-                        tmp = Path(".tmp_generated_plan.yaml")
-                        tmp.write_text(st.session_state["gen_yaml"], encoding="utf-8")
-                        plan2 = load_plan(tmp)
-                        errors2 = validate_plan(plan2, registry)
-                        if errors2:
-                            st.session_state["gen_ok"] = False
-                            st.error("\n".join(errors2))
-                        else:
-                            dry_run_plan(plan2, registry)
-                            st.session_state["gen_ok"] = True
-                            st.success("検証/ドライランOK")
-                    except Exception as e:
+                    plan2, errors2, dr_err2 = validate_and_dryrun(st.session_state["gen_yaml"], registry, do_dryrun=True)
+                    if errors2:
                         st.session_state["gen_ok"] = False
-                        st.error(str(e))
-                    finally:
-                        if 'tmp' in locals() and tmp.exists():
-                            tmp.unlink()
+                        st.error("\n".join(errors2))
+                    elif dr_err2 is not None:
+                        st.session_state["gen_ok"] = False
+                        st.error(str(dr_err2))
+                    else:
+                        st.session_state["gen_ok"] = True
+                        st.success("検証/ドライランOK")
             with colr:
                 disabled = not bool(st.session_state.get("gen_ok"))
                 if st.button("登録", disabled=disabled):
-                    try:
-                        tmp = Path(".tmp_generated_plan.yaml")
-                        tmp.write_text(st.session_state["gen_yaml"], encoding="utf-8")
-                        plan3 = load_plan(tmp)
-                        # 念のためもう一度チェック
-                        errs = validate_plan(plan3, registry)
-                        if errs:
-                            st.error("\n".join(errs))
-                        else:
-                            dry_run_plan(plan3, registry)
-                            designs_dir = Path("designs")
-                            designs_dir.mkdir(parents=True, exist_ok=True)
-                            ts = datetime.now(UTC).strftime("%Y%m%d%H%M")
-                            out_path = designs_dir / f"{plan3.id}_{ts}.yaml"
-                            data = plan3.model_dump(by_alias=True)
-                            out_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
-                            st.success(f"登録しました: {out_path}")
-                    except Exception as e:
-                        st.error(str(e))
-                    finally:
-                        if 'tmp' in locals() and tmp.exists():
-                            tmp.unlink()
+                    plan3, errs, dr_err3 = validate_and_dryrun(st.session_state["gen_yaml"], registry, do_dryrun=True)
+                    if errs:
+                        st.error("\n".join(errs))
+                    elif dr_err3 is not None:
+                        st.error(str(dr_err3))
+                    else:
+                        designs_dir = Path("designs")
+                        designs_dir.mkdir(parents=True, exist_ok=True)
+                        ts = datetime.now(UTC).strftime("%Y%m%d%H%M")
+                        out_path = designs_dir / f"{plan3.id}_{ts}.yaml"
+                        data = plan3.model_dump(by_alias=True)
+                        out_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+                        st.success(f"登録しました: {out_path}")
 
     with tabs[1]:
         st.subheader("業務実施")
@@ -351,7 +356,12 @@ def main():
         # 選択したプランのタイトルを表示
         plan = load_plan(plan_path2)
         st.markdown(f"> {plan.id}")
-        st.info(plan.vars["instruction"])
+        try:
+            instr_text = (plan.vars or {}).get("instruction")
+        except Exception:
+            instr_text = None
+        if instr_text:
+            st.info(instr_text)
         
 
         # フロー図プレースホルダ
@@ -803,10 +813,19 @@ def main():
                     file = st.selectbox("Run", files)
                     if file:
                         try:
-                            lines = file.read_text(encoding="utf-8").splitlines()
-                            events = [json.loads(l) for l in lines if l.strip()]
+                            text = file.read_text(encoding="utf-8", errors="replace")
                         except Exception:
-                            events = []
+                            text = ""
+                        lines = text.splitlines()
+                        events = []
+                        for l in lines:
+                            s = str(l).strip()
+                            if not s:
+                                continue
+                            try:
+                                events.append(json.loads(s))
+                            except Exception:
+                                continue
 
                         # 簡易フィルタ
                         types = sorted({e.get("type") for e in events})
@@ -865,6 +884,9 @@ def main():
                         except Exception as _viz_err:
                             st.warning(f"DAG可視化でエラー: {_viz_err}")
                         st.json(filtered)
+                        if not filtered and lines:
+                            st.info("イベントの解析に失敗したため、Rawログを表示します。")
+                            st.text_area("Raw JSONL", value="\n".join(lines), height=200)
                         st.download_button("JSONL ダウンロード", data="\n".join(lines), file_name=file.name, mime="application/jsonl")
 
 

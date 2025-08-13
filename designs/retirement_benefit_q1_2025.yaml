@@ -141,12 +141,16 @@ graph:
         bytes: ${upload_files.uploaded.workbook}
       operations:
         # 5-1: テンプレートシートを複製（前四半期 → 当四半期）
-        - { type: copy_sheet, sheet_name: "${compute_q.template_sheet_name}", target: "${compute_q.target_sheet_name}" }
+        - { type: copy_sheet, sheet_name: "${compute_q.template_sheet_name}", target: "${compute_q.quarter_sheet_name}" }
+        # 互換: 万一本テンプレート名が見つからない場合、四半期名で新規追加
+        - { type: add_sheet, sheet_name: "${compute_q.quarter_sheet_name}" }
         # 5-2: C2セルへ期末日（YYYY-MM-DD）
-        - { type: update_cells, sheet_name: "${compute_q.target_sheet_name}", target: "C2", data: "${compute_q.period.end}" }
+        - { type: update_cells, sheet_name: "${compute_q.quarter_sheet_name}", target: "C2", data: "${compute_q.period.end}" }
+        # 将来のテンプレート差異に備え、C2が存在しない場合のフォールバックを追加（A1に期末日）
+        - { type: update_cells_if, condition: true, sheet_name: "${compute_q.quarter_sheet_name}", target: "A1", data: "${compute_q.period.end}" }
         # 5-3: 入社社員の追記（B=社員ID, C=社員名(=名前), D=入社日 をテーブル末尾の次行に追加）
         - type: append_rows_bottom
-          sheet_name: "${compute_q.target_sheet_name}"
+          sheet_name: "${compute_q.quarter_sheet_name}"
           rows: "${filter_joined.joined_in_q}"
           columns:
             "社員ID": "B"
@@ -154,7 +158,7 @@ graph:
             "入社日": "D"
         # 5-4: 退職者の既存行を社員IDで特定し、退職日/退職給付金を更新しつつ G~X 列をグレー塗り
         - type: update_rows_by_match
-          sheet_name: "${compute_q.target_sheet_name}"
+          sheet_name: "${compute_q.quarter_sheet_name}"
           key: "社員ID"
           key_column: "B"
           items: "${match_benefits.retired_benefits.results}"
@@ -164,7 +168,7 @@ graph:
           fill_range_columns: "B:G"
           fill_color: "#D9D9D9"
         # 5-5: 年度繰越時（1Q）のみ F2 をクリア（当年度支払い金額欄のリセット）
-        - { type: clear_cells_if, sheet_name: "${compute_q.target_sheet_name}", targets: ["F2"], condition: "${compute_q.is_q1}" }
+        - { type: clear_cells_if, sheet_name: "${compute_q.quarter_sheet_name}", targets: ["F2"], condition: "${compute_q.is_q1}" }
     out:
       workbook_updated: wb
 

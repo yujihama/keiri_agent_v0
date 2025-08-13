@@ -77,6 +77,8 @@ class ComputeFiscalQuarterBlock(ProcessingBlock):
             "target_sheet_name": target_sheet,
             "template_sheet_name": template_sheet,
             "quarter_label": label,
+            # 代替のシート名表記（テスト互換: YYYY_Qn）
+            "quarter_sheet_name": f"{fiscal_year}_Q{quarter}",
         }
 
 

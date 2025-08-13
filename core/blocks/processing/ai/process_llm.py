@@ -7,6 +7,7 @@ import json
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.errors import BlockError, BlockException, ErrorCode, create_input_error, create_external_error, wrap_exception
 from pydantic import BaseModel, Field, create_model, ConfigDict
+from core.plan.logger import export_log
 
 
 def _default_output_schema() -> Dict[str, Any]:
@@ -161,6 +162,10 @@ class ProcessLLMBlock(ProcessingBlock):
                     "temperature": 0,
                     "group_key": inputs.get("group_key"),
                 }
+                try:
+                    export_log({"mode": "fastpath", "results_keys": list(structured.keys()), "files": 0, "tables": 0}, ctx=ctx, tag="ai.process_llm")
+                except Exception:
+                    pass
                 return {"results": structured, "summary": summary}
             except Exception:
                 # fallthrough to LLM path
@@ -293,6 +298,12 @@ class ProcessLLMBlock(ProcessingBlock):
                 "temperature": temperature,
                 "group_key": inputs.get("group_key"),
             }
+            try:
+                # 結果の概要（キー/件数のみ）
+                keys = list(structured.keys()) if isinstance(structured, dict) else []
+                export_log({"mode": "llm", "keys": keys, "files": len(docs), "tables": len(tables)}, ctx=ctx, tag="ai.process_llm")
+            except Exception:
+                pass
             return {"results": structured, "summary": summary}
         except Exception as e:
             # 失敗時のフォールバックは提供しない（エラーを上位に送出）

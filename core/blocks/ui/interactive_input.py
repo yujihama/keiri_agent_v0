@@ -10,6 +10,7 @@ import streamlit as st
 from core.blocks.base import BlockContext, UIBlock
 from core.ui.session_state import SessionStateManager, NodeStateContext
 from typing import Optional as _Optional
+from core.plan.logger import export_log
 
 # LLM 連携（既存の ai.process_llm に合わせた依存）
 try:  # 遅延インポートに近い扱い（環境未設定時でもUIは描画）
@@ -165,6 +166,21 @@ class InteractiveInputBlock(UIBlock):
             # スナップショット保存（以降のrerunで常に表示継続）
             state.set("submitted", True)
             state.set("snapshot", dict(collected_data))
+            # ログ: 入力の概要（フィールドと型/サイズのみ）
+            try:
+                inputs_summary = []
+                for k, v in collected_data.items():
+                    item: Dict[str, Any] = {"id": k}
+                    if isinstance(v, (bytes, bytearray)):
+                        item.update({"type": "bytes", "len": len(v)})
+                    elif isinstance(v, list) and v and isinstance(v[0], (bytes, bytearray)):
+                        item.update({"type": "bytes[]", "count": len(v)})
+                    else:
+                        item.update({"type": type(v).__name__})
+                    inputs_summary.append(item)
+                export_log({"mode": "collect", "inputs": inputs_summary}, ctx=ctx, tag="ui.collect_submitted")
+            except Exception:
+                pass
 
             return {
                 "collected_data": collected_data,
@@ -192,6 +208,11 @@ class InteractiveInputBlock(UIBlock):
         
         # コメント入力
         comment = st.text_area("コメント（任意）", key=f"comment_{ctx.run_id}")
+        # ログ: 承認結果（コメントの長さのみ）
+        try:
+            export_log({"mode": "confirm", "approved": approved, "comment_len": len(comment or "")}, ctx=ctx, tag="ui.confirm")
+        except Exception:
+            pass
         
         return {
             "collected_data": {"comment": comment} if comment else {},
@@ -238,6 +259,10 @@ class InteractiveInputBlock(UIBlock):
                 if user_input:
                     st.session_state[chat_key].append({"role": "user", "content": user_input})
                     st.session_state[chat_key].append({"role": "assistant", "content": f"了解しました: {user_input}"})
+                    try:
+                        export_log({"mode": "inquire", "event": "chat_freeform", "message": user_input[:200]}, ctx=ctx, tag="ui.inquire")
+                    except Exception:
+                        pass
                 return {
                     "collected_data": {"chat_history": st.session_state.get(chat_key, [])},
                     "approved": True,
@@ -335,10 +360,18 @@ class InteractiveInputBlock(UIBlock):
             elif user_input:
                 # ユーザーからの新しい入力
                 st.session_state[chat_key].append({"role": "user", "content": user_input})
+                try:
+                    export_log({"mode": "inquire", "event": "chat_user", "message": user_input[:200]}, ctx=ctx, tag="ui.inquire")
+                except Exception:
+                    pass
                 need_llm_call = True
                 user_message = user_input
             else:
                 # 入力待ち状態
+                try:
+                    export_log({"mode": "inquire", "event": "chat_update", "message": (user_input or "")[:200]}, ctx=ctx, tag="ui.inquire")
+                except Exception:
+                    pass
                 return {
                     "approved": False,
                     "response": None,
@@ -405,6 +438,17 @@ Requirements:
                             SystemMessage(content=sys_prompt.format(**payload)),
                             HumanMessage(content=f"ユーザーメッセージ: {user_message or '初回質問をお願いします'}")
                         ])
+                        # LLMが生成した次の質問/状態をデバッグ出力
+                        try:
+                            export_log({
+                                "mode": "inquire",
+                                "event": "chat_llm",
+                                "next_question": (response.next_question or "")[:200],
+                                "is_complete": bool(response.is_complete),
+                                "extracted_count": len(response.extracted_values or []),
+                            }, ctx=ctx, tag="ui.inquire")
+                        except Exception:
+                            pass
                         
                         # 抽出された値を更新
                         for update in response.extracted_values:
@@ -424,17 +468,34 @@ Requirements:
                         
                         # データを保存
                         state.set("collected_data", dict(collected_data))
+                        try:
+                            export_log({
+                                "mode": "inquire",
+                                "event": "extracted",
+                                "updated_fields": [u.field_id for u in response.extracted_values],
+                                "missing_after": _get_missing_fields(),
+                            }, ctx=ctx, tag="ui.inquire")
+                        except Exception:
+                            pass
                         
                         # 完了チェック
                         if response.is_complete or not _get_missing_fields():
                             completion_msg = "必要な情報の収集が完了しました。ありがとうございました。"
                             st.session_state[chat_key].append({"role": "assistant", "content": completion_msg})
+                            try:
+                                export_log({"mode": "inquire", "event": "chat_assistant", "message": completion_msg[:200]}, ctx=ctx, tag="ui.inquire")
+                            except Exception:
+                                pass
                             state.set("submitted", True)
                             st.rerun()
                         else:
                             # 次の質問を追加
                             if response.next_question:
                                 st.session_state[chat_key].append({"role": "assistant", "content": response.next_question})
+                                try:
+                                    export_log({"mode": "inquire", "event": "chat_assistant", "message": (response.next_question or "")[:200]}, ctx=ctx, tag="ui.inquire")
+                                except Exception:
+                                    pass
                                 st.rerun()
                             else:
                                 # 質問がない場合は不足フィールドから自動生成
@@ -442,6 +503,10 @@ Requirements:
                                 if missing:
                                     auto_question = f"次に{missing[0]}について教えてください。"
                                     st.session_state[chat_key].append({"role": "assistant", "content": auto_question})
+                                    try:
+                                        export_log({"mode": "inquire", "event": "chat_auto_question", "message": auto_question[:200]}, ctx=ctx, tag="ui.inquire")
+                                    except Exception:
+                                        pass
                                     st.rerun()
                                 
                     except Exception as e:

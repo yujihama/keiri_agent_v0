@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 import csv
 
 from core.blocks.base import BlockContext, ProcessingBlock
+from core.plan.logger import export_log
 
 
 class ReadCSVBlock(ProcessingBlock):
@@ -40,6 +41,13 @@ class ReadCSVBlock(ProcessingBlock):
                         rows.append({str(i): v for i, v in enumerate(r)})
         except Exception:
             return {"rows": [], "summary": {"path": path, "rows": 0, "error": True}}
+
+        # ログ: 概要（列名と件数のみ）
+        try:
+            cols = list(rows[0].keys()) if rows else []
+            export_log({"source": path or "<bytes>", "rows": len(rows), "columns": cols[:50]}, ctx=ctx, tag="file.read_csv")
+        except Exception:
+            pass
 
         return {"rows": rows, "summary": {"path": path, "rows": len(rows)}}
 

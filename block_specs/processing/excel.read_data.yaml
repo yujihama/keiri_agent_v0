@@ -5,6 +5,9 @@ inputs:
   workbook:
     type: object
     description: "Excelワークブック。{name, bytes} または生bytesを受け付ける"
+  mode:
+    type: string
+    description: "single|multi。single時はトップレベル rows を併せて返す（既定: single）"
   recalc:
     type: object
     description: |
@@ -23,6 +26,9 @@ outputs:
   data:
     type: object
     description: シート名をキー、各シートの行配列（list[object]）を値とする辞書
+  rows:
+    type: array
+    description: mode=single の時に返すトップレベル行配列
   summary:
     type: object
     description: 読み取りサマリー（シート数、各シートの行数など）

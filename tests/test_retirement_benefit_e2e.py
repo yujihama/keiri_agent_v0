@@ -42,9 +42,15 @@ def test_retirement_benefit_q1_2025_e2e(tmp_path: Path):
 
     # 入力データのロード（実データ）
     base_dir = Path("tests/data/retirement_data")
-    employees = (base_dir / "社員一覧.csv").read_bytes()
-    journal = (base_dir / "仕訳データ.csv").read_bytes()
-    workbook_src = (base_dir / "退職給付ワークブック.xlsx").read_bytes()
+    def _read_bytes(name: str) -> bytes:
+        p = base_dir / name
+        if not p.exists():
+            p = base_dir / "old" / name
+        return p.read_bytes()
+
+    employees = _read_bytes("社員一覧.csv")
+    journal = _read_bytes("仕訳データ.csv")
+    workbook_src = _read_bytes("退職給付ワークブック.xlsx")
 
     # ランナー（UIをHITLモードにして事前投入を利用）
     runs_dir = tmp_path / "runs"

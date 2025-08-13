@@ -1,0 +1,33 @@
+id: excel.write
+version: 0.1.0
+entrypoint: blocks/processing/excel/write.py:ExcelWriteBlock
+inputs:
+  workbook:
+    type: object
+    description: "{name, bytes} または生bytesを受け付ける。未指定時は新規ブックを生成"
+  cell_updates:
+    type: [object, array]
+    description: "{sheet?, cells:{'A1': val, ...}} または配列"
+  column_updates:
+    type: [object, array]
+    description: "{sheet?, header_row?, start_row?, columns:[{header,path}], values, write_header?, clear_existing?} または配列"
+  match_updates:
+    type: [object, array]
+    description: |
+      既存行のキー一致で値更新＋任意の行塗りに対応する拡張。
+      - { sheet?, key_column: 'A'|'B'|..., key_field: string, start_row?: 2,
+          items: list[dict], update_columns: { src_field: 'A'|... },
+          fill_range_columns?: 'A:P', fill_color?: '#D9D9D9' }
+outputs:
+  write_summary:
+    type: object
+  workbook_updated:
+    type: object
+  workbook_b64:
+    type: string
+requirements: []
+description: |
+  セル更新と列更新に特化した統一Excel書き出しブロック。LLMが誤用しにくい最小スキーマで構成。
+  match_updates により、update_rows_by_match 相当の操作（キー列で行特定→複数列更新→任意列範囲の塗り）も実施可能。
+
+

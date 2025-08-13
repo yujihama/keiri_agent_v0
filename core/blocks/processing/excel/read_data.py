@@ -14,6 +14,7 @@ import streamlit as st
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.errors import BlockException, BlockError, ErrorCode
+from core.plan.logger import export_log
 
 
 class ExcelReadDataBlock(ProcessingBlock):
@@ -54,6 +55,11 @@ class ExcelReadDataBlock(ProcessingBlock):
             return {"data": {}, "summary": {"sheets": 0, "rows": {}}}
 
         cfg = inputs.get("read_config") or {}
+        # 読み取りモード: single | multi （single 既定。single時はトップレベル rows を併せて返す）
+        mode_raw = cfg.get("mode") if isinstance(cfg, dict) else None
+        if mode_raw is None:
+            mode_raw = inputs.get("mode")
+        mode = str(mode_raw or "single").strip().lower()
         default_header_row = int(cfg.get("header_row", 1) or 1)
         default_skip_empty = bool(cfg.get("skip_empty_rows", True))
         date_as_iso = bool(cfg.get("date_as_iso", True))
@@ -370,7 +376,29 @@ class ExcelReadDataBlock(ProcessingBlock):
             out[name] = records
             rows_count[name] = len(records)
 
-        summary = {"sheets": len(out), "rows": rows_count, "recalc": {"enabled": bool(recalc_enabled), "status": recalc_status}}
+        summary = {"sheets": len(out), "rows": rows_count, "recalc": {"enabled": bool(recalc_enabled), "status": recalc_status}, "mode": mode}
+        # ログ: 読み取り概要
+        try:
+            export_log({"sheets": list(out.keys()), "rows": rows_count, "recalc": recalc_status}, ctx=ctx, tag="excel.read_data")
+        except Exception:
+            pass
+
+        # singleモード時はトップレベル rows を追加（厳密には Plan で1枚のみを想定）
+        if mode == "single":
+            selected_rows: List[Dict[str, Any]] = []
+            try:
+                sheets_cfg = cfg.get("sheets")
+                if isinstance(sheets_cfg, list) and len(sheets_cfg) == 1 and isinstance(sheets_cfg[0], dict):
+                    sname = sheets_cfg[0].get("name")
+                    if isinstance(sname, str) and sname in out:
+                        selected_rows = out.get(sname, [])
+                # フォールバック: 1枚だけ読み取れた場合
+                if not selected_rows and len(out.keys()) == 1:
+                    only = next(iter(out.keys()))
+                    selected_rows = out.get(only, [])
+            except Exception:
+                selected_rows = []
+            return {"data": out, "rows": selected_rows, "summary": summary}
 
         return {"data": out, "summary": summary}
 

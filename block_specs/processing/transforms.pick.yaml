@@ -1,0 +1,22 @@
+id: transforms.pick
+version: 0.1.0
+entrypoint: blocks/processing/transforms/pick.py:PickBlock
+inputs:
+  source:
+    type: object
+  path:
+    type: string
+  return:
+    type: string
+    description: "bytes|object|string|number|boolean"
+  base64:
+    type: boolean
+    description: "return=bytes の時に base64 文字列として解釈してデコードするか"
+outputs:
+  value:
+    type: object
+requirements: []
+description: |
+  任意のオブジェクトからドットパスで値を抽出し、指定型で返す統一ブロック。
+
+
