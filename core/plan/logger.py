@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from pathlib import Path
 from threading import Lock
@@ -16,6 +16,8 @@ _RUN_LOG_PATHS: dict[str, "_RunLogInfo"] = {}
 class _RunLogInfo:
     plan_id: str
     path: Path
+    # Per-log-file lock to guarantee atomic append from multiple threads
+    lock: Lock = field(default_factory=Lock)
 
 
 def register_log_path(run_id: str, plan_id: str, path: Path) -> None:
@@ -51,11 +53,12 @@ def write_event(run_id: str, event: Dict[str, Any]) -> None:
     ev.setdefault("run_id", run_id)
     ev.setdefault("schema", "v1")
     line = json.dumps(ev, ensure_ascii=False) + "\n"
-    # Single-process Streamlit environment: OS append is atomic per line for small writes.
-    # If multi-process is introduced, a file lock should be added here.
+    # Ensure directory exists
     info.path.parent.mkdir(parents=True, exist_ok=True)
-    with info.path.open("a", encoding="utf-8") as f:
-        f.write(line)
+    # Serialize writes per log file to avoid interleaved JSON fragments
+    with info.lock:
+        with info.path.open("a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def export_log(

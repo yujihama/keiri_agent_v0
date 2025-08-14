@@ -377,9 +377,9 @@ def _generate_plan_llm(
 - ファイル処理が必要な場合、必ず最初にui.interactive_inputでファイルアップロードUIを作成
 - 型の整合性を厳守: 各入力の期待される型（object/array/string等）に合わせる
 - ai.process_llmの'evidence_data'はobject型、'prompt'と'output_schema'は必須
-  - output_schemaはオブジェクト形式で記述（例: {{field1: string, field2: number}}）、文字列で囲まない（空不可）
+  - output_schemaはオブジェクト形式で記述（例: {{{{field1: string, field2: number}}}}）、文字列で囲まない（空不可）
   - Excel出力は excel.write を使用。必ずExcelファイル入力UIを先に作成。
-      columns: {{ <headerName>: <dataPath>, ... }} または [{"header": <headerName>, "path": <dataPath>}] を指定し、values にデータ配列を渡す
+      columns: {{{{ <headerName>: <dataPath>, ... }}}} または [{{"header": <headerName>, "path": <dataPath>}}] を指定し、values にデータ配列を渡す
     """
 
     model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"

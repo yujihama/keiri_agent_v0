@@ -63,6 +63,7 @@ plan = gen.plan
 - すべての実行は `runs/<plan_id>/<timestamp>.jsonl` に JSONL でイベントを追記します。
 - ブロック/テストからは `logger.export_log(data, ctx=ctx, tag=...)` や `logger.log_metric(name, value, ctx=ctx)` を利用可能。
 - UI/HITL を有効にした実行は `pending_ui`/`ui_outputs` を `runs/<plan_id>/*.state.json` に保存し、再開・再利用を支援します。
+- ヘッドレス実行の手順と標準ディレクトリは `docs/headless_mode.md` を参照してください。
 
 ### UI / HITL（Human-in-the-loop）
 - `PlanRunner(..., default_ui_hitl=True)` で UI ブロックを待機モードにできます。

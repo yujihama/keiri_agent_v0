@@ -73,7 +73,7 @@ graph:
     in:
       items: ${read_employees.employees}
       conditions:
-        - { field: "入社日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
+        - { field: "採用年月日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
     out:
       filtered: joined_in_q
 
@@ -83,7 +83,7 @@ graph:
     in:
       items: ${read_employees.employees}
       conditions:
-        - { field: "退職日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
+        - { field: "退職年月日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
     out:
       filtered: retired_in_q
 

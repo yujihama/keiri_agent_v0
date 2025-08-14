@@ -39,7 +39,10 @@ class InteractiveInputBlock(UIBlock):
     def render(self, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Optional[Any] = None) -> Dict[str, Any]:
         # ヘッドレスモードの処理（引数ベース）
         if execution_context and getattr(execution_context, 'headless_mode', False):
-            return self._headless_response(inputs, execution_context)
+            # node_id を付与してモック応答の選択を正確化
+            _inputs = dict(inputs)
+            _inputs.setdefault("node_id", ctx.vars.get("__node_id", ""))
+            return self._headless_response(_inputs, execution_context)
         
         mode = inputs.get("mode", "collect")
         message = inputs.get("message", "")
@@ -672,7 +675,25 @@ Requirements:
         if execution_context:
             mock_response = execution_context.get_ui_mock_response(self.id, inputs.get("node_id", ""))
             if mock_response:
-                return mock_response
+                # モックに auto_resolve 指示がある場合はファイルを実体化
+                try:
+                    resp = dict(mock_response)
+                    cd = resp.get("collected_data")
+                    if isinstance(cd, dict):
+                        realized: Dict[str, Any] = {}
+                        for fid, val in cd.items():
+                            if val == "auto_resolve":
+                                try:
+                                    data = execution_context.resolve_file_input(fid)
+                                    realized[fid] = data if data is not None else None
+                                except Exception:
+                                    realized[fid] = None
+                            else:
+                                realized[fid] = val
+                        resp["collected_data"] = realized
+                    return resp
+                except Exception:
+                    return mock_response
         
         # フォールバック: 既存のダミーデータ
         mode = inputs.get("mode", "collect")

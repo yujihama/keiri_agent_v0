@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple, Iterable
 import os
 
 from core.blocks.base import BlockContext, ProcessingBlock
+from core.plan.logger import export_log
 
 
 class PandasDataframeAgentBlock(ProcessingBlock):
@@ -50,6 +51,136 @@ class PandasDataframeAgentBlock(ProcessingBlock):
 
     id = "table.pandas_agent"
     version = "0.1.0"
+
+    # ---- LangChain verbose callback → export_log(JSONL) ----
+    @staticmethod
+    def _get_lc_callback_base():
+        try:
+            # Newer versions
+            from langchain_core.callbacks import BaseCallbackHandler  # type: ignore
+            return BaseCallbackHandler
+        except Exception:
+            try:
+                # Older versions
+                from langchain.callbacks.base import BaseCallbackHandler  # type: ignore
+                return BaseCallbackHandler
+            except Exception:
+                # Last resort stub
+                class _Stub:
+                    pass
+
+                return _Stub
+
+    @staticmethod
+    def _summarize_for_log(value: Any, depth: int = 0) -> Any:
+        try:
+            if depth > 3:
+                return "<depth_limit>"
+            if isinstance(value, (bytes, bytearray)):
+                return {"__type": "bytes", "len": len(value)}
+            if isinstance(value, str):
+                s = value
+                return s if len(s) <= 200 else (s[:200] + "…")
+            if isinstance(value, dict):
+                out: Dict[str, Any] = {}
+                cnt = 0
+                for k, v in value.items():
+                    out[str(k)] = PandasDataframeAgentBlock._summarize_for_log(v, depth + 1)
+                    cnt += 1
+                    if cnt >= 50:
+                        out["__truncated__"] = True
+                        break
+                return out
+            if isinstance(value, (list, tuple)):
+                arr = []
+                for i, v in enumerate(value):
+                    if i >= 50:
+                        arr.append("<truncated>")
+                        break
+                    arr.append(PandasDataframeAgentBlock._summarize_for_log(v, depth + 1))
+                return arr
+            return value
+        except Exception:
+            return "<unserializable>"
+
+    def _make_verbose_callback(self, ctx: BlockContext):
+        Base = self._get_lc_callback_base()
+
+        block = self
+        class _LCVerboseCallback(Base):  # type: ignore
+            def __init__(self) -> None:
+                self._tag = "df_agent.verbose"
+
+            # Utility
+            def _elog(self, payload: Dict[str, Any]) -> None:
+                try:
+                    export_log(payload, ctx=ctx, tag=self._tag, level="debug")
+                except Exception:
+                    pass
+
+            # Chains
+            def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs: Any) -> None:  # noqa: D401
+                self._elog({
+                    "event": "chain_start",
+                    "serialized": block._summarize_for_log(serialized),
+                    "inputs": block._summarize_for_log(inputs),
+                })
+
+            def on_chain_end(self, outputs: Dict[str, Any], **kwargs: Any) -> None:
+                self._elog({
+                    "event": "chain_end",
+                    "outputs": block._summarize_for_log(outputs),
+                })
+
+            # LLM
+            def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any) -> None:
+                self._elog({
+                    "event": "llm_start",
+                    "serialized": block._summarize_for_log(serialized),
+                    "prompts": block._summarize_for_log(prompts),
+                })
+
+            def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+                self._elog({
+                    "event": "llm_end",
+                    "response": block._summarize_for_log(getattr(response, "model_dump", lambda: str(response))()),
+                })
+
+            # Tools
+            def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs: Any) -> None:
+                self._elog({
+                    "event": "tool_start",
+                    "serialized": block._summarize_for_log(serialized),
+                    "input": block._summarize_for_log(input_str),
+                })
+
+            def on_tool_end(self, output: Any, **kwargs: Any) -> None:
+                self._elog({
+                    "event": "tool_end",
+                    "output": block._summarize_for_log(output),
+                })
+
+            # Agent
+            def on_agent_action(self, action: Any, **kwargs: Any) -> Any:
+                try:
+                    payload = {
+                        "event": "agent_action",
+                        "tool": getattr(action, "tool", None) or getattr(action, "tool_name", None),
+                        "tool_input": block._summarize_for_log(getattr(action, "tool_input", None)),
+                        "log": block._summarize_for_log(getattr(action, "log", None)),
+                    }
+                except Exception:
+                    payload = {"event": "agent_action", "action": block._summarize_for_log(str(action))}
+                self._elog(payload)
+                return action
+
+            def on_text(self, text: str, **kwargs: Any) -> None:
+                self._elog({
+                    "event": "text",
+                    "text": block._summarize_for_log(text),
+                })
+
+        return _LCVerboseCallback()
 
     def _ensure_llm(self):
         have_llm = bool(os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"))
@@ -230,7 +361,12 @@ class PandasDataframeAgentBlock(ProcessingBlock):
 
         model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"
         temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0"))
-        llm = ChatOpenAI(model=model_name, temperature=temperature)
+        # Always verbose for this tool
+        callback_handler = self._make_verbose_callback(ctx)
+        try:
+            llm = ChatOpenAI(model=model_name, temperature=temperature, callbacks=[callback_handler])
+        except Exception:
+            llm = ChatOpenAI(model=model_name, temperature=temperature)
 
         # pandas agent 準備（古/新 API 併用対応）
         allow_dangerous_code = True
@@ -268,23 +404,45 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                     raise wrap_exception(e, ErrorCode.CONFIG_MISSING, inputs)
 
         # 受け入れ可能なキーワード引数はバージョン差があるため、動的に付与
-        agent_kwargs: Dict[str, Any] = {"verbose": verbose}
-        # allow_dangerous_code がサポートされていれば渡す
+        agent_kwargs: Dict[str, Any] = {"verbose": True}
+        # Try attach callbacks at creation time (version-dependent)
+        agent = None
         try:
-            agent = agent_factory(llm, dfs_ordered, allow_dangerous_code=True, verbose=True)
+            agent = agent_factory(
+                llm,
+                dfs_ordered,
+                allow_dangerous_code=True,
+                verbose=True,
+                callbacks=[callback_handler],
+            )
         except TypeError:
-            agent = agent_factory(llm, dfs_ordered, **agent_kwargs)
+            try:
+                agent = agent_factory(
+                    llm,
+                    dfs_ordered,
+                    allow_dangerous_code=True,
+                    verbose=True,
+                    agent_executor_kwargs={"callbacks": [callback_handler]},
+                )
+            except TypeError:
+                agent = agent_factory(llm, dfs_ordered, **agent_kwargs)
 
         # 実行
         try:
             # invoke 形式（LCEL）
-            result = agent.invoke({"input": instruction_text})
+            try:
+                result = agent.invoke({"input": instruction_text}, config={"callbacks": [callback_handler]})
+            except TypeError:
+                result = agent.invoke({"input": instruction_text})
             # 典型: {"input":..., "output": str, "intermediate_steps": ...}
             output_text = result.get("output") if isinstance(result, dict) else None
             steps = result.get("intermediate_steps") if isinstance(result, dict) else None
             if output_text is None:
                 # run 形式（レガシ）
-                output_text = agent.run(instruction_text)
+                try:
+                    output_text = agent.run(instruction_text, callbacks=[callback_handler])
+                except TypeError:
+                    output_text = agent.run(instruction_text)
                 steps = None
         except Exception as e:
             from core.errors import wrap_exception, ErrorCode
@@ -314,6 +472,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
             "flatten_multiindex": flatten_multiindex,
             "sample_rows": sample_rows,
             "datasets": datasets_meta,
+            "verbose": True,
         }
 
         return {

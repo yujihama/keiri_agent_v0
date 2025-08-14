@@ -1,0 +1,33 @@
+{
+  "ui.interactive_input": {
+    "upload_files": {
+      "collected_data": {
+        "employees_csv": "auto_resolve",
+        "journal_csv": "auto_resolve",
+        "salary_csv": "auto_resolve",
+        "ledger_csv": "auto_resolve",
+        "workbook": "auto_resolve"
+      },
+      "approved": true,
+      "response": null,
+      "metadata": {
+        "submitted": true,
+        "mode": "collect"
+      }
+    },
+    "select_quarter": {
+      "collected_data": {
+        "fiscal_year": "2024",
+        "quarter": "Q4"
+      },
+      "approved": true,
+      "response": null,
+      "metadata": {
+        "submitted": true,
+        "mode": "inquire"
+      }
+    }
+  }
+}
+
+

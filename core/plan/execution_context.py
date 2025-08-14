@@ -69,15 +69,26 @@ class ExecutionContext:
         return None
     
     def get_ui_mock_response(self, block_id: str, node_id: str) -> Optional[Dict[str, Any]]:
-        """UIブロックのモック応答を取得"""
-        # ノード固有のモック応答を優先
+        """UIブロックのモック応答を取得
+        優先順位:
+          1) ノードID直下
+          2) ブロックID下のノードID
+          3) ブロックIDに紐づく単一レスポンス（approved/metadata を含むもののみ）
+        """
+        # 1) ノード固有
         if node_id in self.ui_mock_responses:
-            return self.ui_mock_responses[node_id]
-        
-        # ブロックID固有のモック応答
-        if block_id in self.ui_mock_responses:
-            return self.ui_mock_responses[block_id]
-        
+            val = self.ui_mock_responses[node_id]
+            return val if isinstance(val, dict) else None
+
+        # 2) ブロックID配下
+        blk = self.ui_mock_responses.get(block_id)
+        if isinstance(blk, dict):
+            if node_id and node_id in blk and isinstance(blk[node_id], dict):
+                return blk[node_id]  # type: ignore[index]
+            # 3) 単一レスポンス（approved/metadata が含まれる時のみ）
+            if all(k in blk for k in ("approved", "metadata")):
+                return blk  # type: ignore[return-value]
+
         return None
     
     def to_dict(self) -> Dict[str, Any]:

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Callable, Optional
 import threading
 from time import perf_counter
 import traceback
+import base64
 
 import networkx as nx
 
@@ -167,6 +168,11 @@ class PlanRunner:
         else:
             run_id = f"{parent_run_id}#{_now_ts()}" if parent_run_id else _now_ts()
         ctx = BlockContext(run_id=run_id, workspace=str(Path.cwd()), vars=dict(plan.vars))
+        # Embed plan id for downstream utilities that rely on it
+        try:
+            ctx.vars["__plan_id"] = plan.id
+        except Exception:
+            pass
         if vars_overrides:
             ctx.vars.update(vars_overrides)
 
@@ -220,6 +226,98 @@ class PlanRunner:
                 return value
             except Exception:
                 return "<unserializable>"
+
+        # Artifacts saving helpers (headless mode)
+        def _artifacts_base_dir() -> Path:
+            try:
+                if execution_context and getattr(execution_context, "output_dir", None):
+                    return Path(getattr(execution_context, "output_dir")) / plan.id / run_id / "artifacts"
+            except Exception:
+                pass
+            return (self.runs_dir / plan.id / run_id / "artifacts")
+
+        def _ensure_dir(p: Path) -> Path:
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+
+        def _safe_filename(name: str) -> str:
+            try:
+                # remove dangerous chars
+                invalid = '<>:"/\\|?*\n\r\t'
+                out = "".join(c for c in str(name) if c not in invalid)
+                return out.strip() or "artifact.bin"
+            except Exception:
+                return "artifact.bin"
+
+        def _write_bytes(path: Path, data: bytes) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            return path
+
+        def _try_decode_b64(s: str) -> bytes | None:
+            try:
+                return base64.b64decode(s)
+            except Exception:
+                return None
+
+        def _save_node_outputs(node_id: str, out: Dict[str, Any]) -> None:
+            # Only in headless mode
+            if not (execution_context and getattr(execution_context, "headless_mode", False)):
+                return
+            base_dir = _ensure_dir(_artifacts_base_dir())
+            # Always save JSON snapshot (bytes will be base64-encoded)
+            def _encode_for_json(v: Any) -> Any:
+                try:
+                    if isinstance(v, (bytes, bytearray)):
+                        return {"__type": "b64bytes", "data": base64.b64encode(bytes(v)).decode("ascii")}
+                    if isinstance(v, dict):
+                        return {kk: _encode_for_json(vv) for kk, vv in v.items()}
+                    if isinstance(v, list):
+                        return [_encode_for_json(x) for x in v]
+                    return v
+                except Exception:
+                    return str(v)
+            try:
+                encoded = _encode_for_json(out)
+                (base_dir / f"{node_id}_outputs.json").write_text(
+                    json.dumps(encoded, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception:
+                pass
+            # Extract and save binary-like artifacts
+            def _walk(current: Any, prefix: str = "") -> None:
+                if isinstance(current, dict):
+                    # Pattern 1: dict with bytes
+                    if "bytes" in current and isinstance(current.get("bytes"), (bytes, bytearray)):
+                        raw: bytes = bytes(current["bytes"])  # type: ignore[arg-type]
+                        name = current.get("name") or f"{prefix or 'artifact'}"
+                        fname = _safe_filename(str(name))
+                        _write_bytes(base_dir / fname, raw)
+                        return
+                    # Pattern 2: dict with base64
+                    if "base64" in current and isinstance(current.get("base64"), str):
+                        b = _try_decode_b64(current["base64"])  # type: ignore[arg-type]
+                        if b is not None:
+                            name = current.get("name") or f"{prefix or 'artifact'}.bin"
+                            fname = _safe_filename(str(name))
+                            _write_bytes(base_dir / fname, b)
+                            return
+                    # Recurse
+                    for k, v in current.items():
+                        new_pref = f"{prefix}_{k}" if prefix else str(k)
+                        _walk(v, new_pref)
+                    return
+                if isinstance(current, list):
+                    for idx, v in enumerate(current):
+                        _walk(v, f"{prefix}_{idx}" if prefix else str(idx))
+                    return
+                # Pattern 3: plain base64 string with typical suffix key handled by parent dict
+                return
+
+            try:
+                _walk(out, prefix=str(node_id))
+            except Exception:
+                pass
 
         # Build DAG from placeholders (shared utility)
         from .graph_utils import build_dependency_graph
@@ -682,8 +780,8 @@ class PlanRunner:
                     block = self.registry.get(node.block)
                     if isinstance(block, UIBlock):
                         inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
-                        # UIブロックの統合処理
-                        out = self._handle_ui_block(block, ctx, inputs, execution_context, nid)
+                        # UIブロックの統合処理（HITL/ヘッドレス/事前注入対応）
+                        out = self._handle_ui_block(block, ctx, inputs, execution_context, nid, plan.id)
                         
                         # UI待機が必要な場合は処理を中断
                         if out.get("metadata", {}).get("submitted") is False:
@@ -725,6 +823,15 @@ class PlanRunner:
                                     }, run_id=run_id, node_id=nid, tag="runner.block")
                                 except Exception:
                                     pass
+                                try:
+                                    _save_node_outputs(nid, out if isinstance(out, dict) else {})
+                                except Exception:
+                                    pass
+                        # ヘッドレス等で即時出力が得られた場合にも成果物を保存
+                        try:
+                            _save_node_outputs(nid, out if isinstance(out, dict) else {})
+                        except Exception:
+                            pass
 
                         for local_out, alias in node.outputs.items():
                             if isinstance(out, dict) and local_out in out:
@@ -758,10 +865,21 @@ class PlanRunner:
                                     # timeout handling via thread future
                                     if timeout_ms and timeout_ms > 0:
                                         with ThreadPoolExecutor(max_workers=1) as sx:
-                                            fut = sx.submit(block_obj.run, ctx, inputs_dict)
+                                            # create node-scoped context to include __node_id for block logging
+                                            node_ctx = BlockContext(run_id=ctx.run_id, workspace=ctx.workspace, vars=dict(ctx.vars))
+                                            try:
+                                                node_ctx.vars["__node_id"] = node_id
+                                            except Exception:
+                                                pass
+                                            fut = sx.submit(block_obj.run, node_ctx, inputs_dict)
                                             out = fut.result(timeout=timeout_ms / 1000.0)
                                     else:
-                                        out = block_obj.run(ctx, inputs_dict)
+                                        node_ctx = BlockContext(run_id=ctx.run_id, workspace=ctx.workspace, vars=dict(ctx.vars))
+                                        try:
+                                            node_ctx.vars["__node_id"] = node_id
+                                        except Exception:
+                                            pass
+                                        out = block_obj.run(node_ctx, inputs_dict)
                                     elapsed_ms = int((perf_counter() - _t0) * 1000)
                                     try:
                                         export_log({
@@ -832,6 +950,10 @@ class PlanRunner:
                             results_by_alias[alias] = out[local_out]
                     results_by_node[node_id] = dict(out)
                     emit({"type": "node_finish", "run_id": run_id, "node": node_id, "elapsed_ms": elapsed_ms, "attempts": attempts})
+                    try:
+                        _save_node_outputs(node_id, out if isinstance(out, dict) else {})
+                    except Exception:
+                        pass
                     # Flow図の成功状態を永続
                     try:
                         self._record_success(plan, run_id, node_id)
@@ -873,7 +995,7 @@ class PlanRunner:
                             block = self.registry.get(node.block)
                             if isinstance(block, UIBlock):
                                 # UIブロックの統合処理
-                                out = self._handle_ui_block(block, ctx, inputs, execution_context, nid)
+                                out = self._handle_ui_block(block, ctx, inputs, execution_context, nid, plan.id)
                                 
                                 # UI待機が必要な場合は処理を中断
                                 if out.get("metadata", {}).get("submitted") is False:
@@ -897,12 +1019,22 @@ class PlanRunner:
                                         # 非HITLモードでは即座にレンダリング
                                         out = block.render(ctx, inputs, execution_context)
                             else:
-                                out = block.run(ctx, inputs)
+                                # create node-scoped context to include __node_id for block logging
+                                node_ctx = BlockContext(run_id=ctx.run_id, workspace=ctx.workspace, vars=dict(ctx.vars))
+                                try:
+                                    node_ctx.vars["__node_id"] = nid
+                                except Exception:
+                                    pass
+                                out = block.run(node_ctx, inputs)
                             for local_out, alias in node.outputs.items():
                                 if isinstance(out, dict) and local_out in out:
                                     results_by_alias[alias] = out[local_out]
                             results_by_node[nid] = dict(out)
                             emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": 0, "attempts": 1})
+                            try:
+                                _save_node_outputs(nid, out if isinstance(out, dict) else {})
+                            except Exception:
+                                pass
                             try:
                                 self._record_success(plan, run_id, nid)
                             except Exception:
@@ -1027,7 +1159,7 @@ class PlanRunner:
                         block_obj = self.registry.get(node.block)
                         if isinstance(block_obj, UIBlock):
                             # UIブロックの統合処理
-                            out = self._handle_ui_block(block_obj, ctx, inputs, execution_context, nid)
+                            out = self._handle_ui_block(block_obj, ctx, inputs, execution_context, nid, plan.id)
                             
                             # UI待機が必要な場合は処理を中断
                             if out.get("metadata", {}).get("submitted") is False:
@@ -1050,6 +1182,10 @@ class PlanRunner:
                                     out = block_obj.render(ctx, inputs, execution_context)
                                     elapsed_ms = int((perf_counter() - _t0) * 1000)
                                     emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
+                            try:
+                                _save_node_outputs(nid, out if isinstance(out, dict) else {})
+                            except Exception:
+                                pass
                         else:
                             # Processing block with minimal retry policy
                             def _exec_block(block_inst: ProcessingBlock, node_id: str, inputs_dict: Dict[str, Any]):
@@ -1076,7 +1212,12 @@ class PlanRunner:
                                                 fut = sx.submit(block_inst.run, ctx, inputs_dict)
                                                 out = fut.result(timeout=timeout_ms / 1000.0)
                                         else:
-                                            out = block_inst.run(ctx, inputs_dict)
+                                            node_ctx = BlockContext(run_id=ctx.run_id, workspace=ctx.workspace, vars=dict(ctx.vars))
+                                            try:
+                                                node_ctx.vars["__node_id"] = node_id
+                                            except Exception:
+                                                pass
+                                            out = block_inst.run(node_ctx, inputs_dict)
                                         elapsed_ms = int((perf_counter() - _t0) * 1000)
                                         try:
                                             export_log({
@@ -1140,6 +1281,10 @@ class PlanRunner:
                             results_by_node[nid] = dict(out)
                             emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": attempts})
                             try:
+                                _save_node_outputs(nid, out if isinstance(out, dict) else {})
+                            except Exception:
+                                pass
+                            try:
                                 self._record_success(plan, run_id, nid)
                             except Exception:
                                 pass
@@ -1177,11 +1322,32 @@ class PlanRunner:
         emit({"type": "finish", "run": run_id, "plan": plan.id})
         return results_by_alias
 
-    def _handle_headless_ui(self, block: UIBlock, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Any) -> Dict[str, Any]:
+    def _handle_headless_ui(self, block: UIBlock, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Any, node_id: str | None = None) -> Dict[str, Any]:
         """ヘッドレスモードでのUIブロック処理"""
         # 実行コンテキストからモック応答を取得
-        mock_response = execution_context.get_ui_mock_response(block.id, ctx.vars.get("__node_id", ""))
+        node_key = (node_id or ctx.vars.get("__node_id", "") or inputs.get("node_id") or "")
+        mock_response = execution_context.get_ui_mock_response(block.id, node_key)
         if mock_response:
+            # モック応答の後処理（auto_resolve など）
+            try:
+                if isinstance(mock_response, dict):
+                    resp = dict(mock_response)
+                    cd = resp.get("collected_data")
+                    if isinstance(cd, dict):
+                        realized: Dict[str, Any] = {}
+                        for fid, val in cd.items():
+                            if val == "auto_resolve":
+                                try:
+                                    data = execution_context.resolve_file_input(fid)
+                                    realized[fid] = data if data is not None else None
+                                except Exception:
+                                    realized[fid] = None
+                            else:
+                                realized[fid] = val
+                        resp["collected_data"] = realized
+                    return resp
+            except Exception:
+                return mock_response
             return mock_response
         
         # フォールバック: ブロックのヘッドレス応答
@@ -1192,11 +1358,40 @@ class PlanRunner:
         return {"metadata": {"submitted": True, "headless": True}}
 
     def _handle_ui_block(self, block: UIBlock, ctx: BlockContext, inputs: Dict[str, Any], 
-                         execution_context: Optional[Any] = None, node_id: str = "") -> Dict[str, Any]:
+                         execution_context: Optional[Any] = None, node_id: str = "", plan_id: Optional[str] = None) -> Dict[str, Any]:
         """UIブロックの統合処理"""
         # ヘッドレスモードでの自動処理
         if execution_context and getattr(execution_context, 'headless_mode', False):
-            return self._handle_headless_ui(block, ctx, inputs, execution_context)
+            return self._handle_headless_ui(block, ctx, inputs, execution_context, node_id)
+        # default_ui_hitl=True かつ 事前注入されたUI結果がある場合はそれを使用
+        if self.default_ui_hitl and plan_id:
+            try:
+                state = self.get_state(plan_id, ctx.run_id) or {}
+                pre = state.get("ui_outputs") or {}
+                # デコード: {"__type":"b64bytes","data":...} -> bytes
+                def _decode(v):
+                    if isinstance(v, dict):
+                        if v.get("__type") == "b64bytes" and isinstance(v.get("data"), str):
+                            try:
+                                return base64.b64decode(v["data"])  # type: ignore[arg-type]
+                            except Exception:
+                                return b""
+                        return {kk: _decode(vv) for kk, vv in v.items()}
+                    if isinstance(v, list):
+                        return [_decode(x) for x in v]
+                    return v
+                if isinstance(pre, dict) and node_id in pre:
+                    out = _decode(pre[node_id])
+                    if isinstance(out, dict):
+                        # ensure metadata.submitted is truthy to avoid UI wait
+                        md = out.get("metadata") or {}
+                        if not isinstance(md, dict):
+                            md = {}
+                        md.setdefault("submitted", True)
+                        out["metadata"] = md
+                        return out
+            except Exception:
+                pass
         
         # 通常のUI処理
         if hasattr(block, 'render'):
