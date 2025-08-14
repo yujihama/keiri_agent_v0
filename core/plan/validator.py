@@ -10,6 +10,7 @@ import networkx as nx
 from packaging.version import Version
 
 from core.blocks.registry import BlockRegistry, BlockSpec
+from .graph_utils import build_dependency_graph
 from .models import Node, Plan
 from .config_store import get_store
 
@@ -407,19 +408,9 @@ def dry_run_plan(plan: Plan, registry: BlockRegistry) -> bool:
     if errors:
         raise ValueError("Plan is invalid; cannot dry-run: " + "; ".join(errors))
 
-    # Build graph again for topological order
-    g = nx.DiGraph()
+    # Build graph again for topological order using shared utility
+    g = build_dependency_graph(plan)
     node_by_id: Dict[str, Node] = {n.id: n for n in plan.graph}
-    for n in plan.graph:
-        g.add_node(n.id)
-    for n in plan.graph:
-        if n.type:
-            continue
-        for v in n.inputs.values():
-            m = _PLACEHOLDER_RE.match(v) if isinstance(v, str) else None
-            if m and "." in m.group(1) and not m.group(1).startswith(("vars.", "env.", "config.")):
-                src_node = m.group(1).split(".", 1)[0]
-                g.add_edge(src_node, n.id)
 
     order = list(nx.topological_sort(g))
 

@@ -1,0 +1,65 @@
+{
+  "headless_mode": true,
+  "output_dir": "output/retirement_benefit_q1_2025",
+  "vars": {
+    "fiscal_year": "2025",
+    "quarter": "Q1",
+    "instruction": "退職給付金の計算（Q1 2025）"
+  },
+  "file_inputs": {
+    "employees_csv": "data/employees.csv",
+    "journal_csv": "data/journal.csv",
+    "workbook": "data/workbook.xlsx"
+  },
+  "preloaded_data": {
+    "config_data": {
+      "company_name": "サンプル株式会社",
+      "calculation_method": "Projected Unit Credit Method"
+    }
+  },
+  "ui_mocks": {
+    "ui.interactive_input": {
+      "upload_files": {
+        "collected_data": {
+          "employees_csv": "auto_resolve",
+          "journal_csv": "auto_resolve",
+          "workbook": "auto_resolve"
+        },
+        "approved": true,
+        "response": null,
+        "metadata": {
+          "timestamp": "2025-01-01T00:00:00",
+          "mode": "collect",
+          "submitted": true
+        }
+      },
+      "select_quarter": {
+        "collected_data": {
+          "fiscal_year": "2025",
+          "quarter": "Q1"
+        },
+        "approved": true,
+        "response": null,
+        "metadata": {
+          "timestamp": "2025-01-01T00:00:00",
+          "mode": "inquire",
+          "submitted": true
+        }
+      }
+    },
+    "ui.confirmation": {
+      "approved": true,
+      "comment": "自動承認（ヘッドレスモード）",
+      "metadata": {
+        "submitted": true
+      }
+    },
+    "ui.placeholder": {
+      "value": "ok",
+      "output_method": "save_runs",
+      "metadata": {
+        "submitted": true
+      }
+    }
+  }
+}

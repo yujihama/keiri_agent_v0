@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import os
 
 import streamlit as st
@@ -12,10 +12,10 @@ class ConfirmationUIBlock(UIBlock):
     id = "ui.confirmation"
     version = "0.1.0"
 
-    def render(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def render(self, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Optional[Any] = None) -> Dict[str, Any]:
         # HITLで待機するケースもあるが、通常実行では即時UI表示
-        if os.getenv("KEIRI_AGENT_HEADLESS", "0") == "1":
-            return {"approved": True, "comment": None, "metadata": {"submitted": True}}
+        if execution_context and getattr(execution_context, 'headless_mode', False):
+            return self._headless_response(inputs, execution_context)
         message = inputs.get("message") or "確認してください"
         options = inputs.get("options") or ["approve", "reject"]
         key_base = str(inputs.get("widget_key") or ctx.run_id)
@@ -47,5 +47,16 @@ class ConfirmationUIBlock(UIBlock):
             return {**snap, "metadata": {"submitted": True}}
         # 未確定時は暫定値（submitted=False）を返す
         return {"approved": approved, "comment": comment, "metadata": {"submitted": False}}
+
+    def _headless_response(self, inputs: Dict[str, Any], execution_context: Optional[Any] = None) -> Dict[str, Any]:
+        """確認ダイアログのヘッドレス応答"""
+        # 実行コンテキストからモック応答を取得
+        if execution_context:
+            mock_response = execution_context.get_ui_mock_response(self.id, inputs.get("node_id", ""))
+            if mock_response:
+                return mock_response
+        
+        # デフォルト: 承認
+        return {"approved": True, "comment": "Auto-approved in headless mode", "metadata": {"submitted": True}}
 
 

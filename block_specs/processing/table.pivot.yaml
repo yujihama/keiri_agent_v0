@@ -1,0 +1,57 @@
+id: table.pivot
+version: 0.1.0
+entrypoint: blocks/processing/table/pivot.py:TablePivotBlock
+inputs:
+  dataframe:
+    type: any
+    description: pandas DataFrame（任意。無い場合は rows から生成）
+  rows:
+    type: array
+    description: list[object] 形式の行配列（任意）
+  index:
+    type: [string, array]
+    description: インデックスにする列名（複数可）
+  columns:
+    type: [string, array]
+    description: ピボットの列方向に展開する列名（複数可）
+  values:
+    type: [string, array]
+    description: 集計対象の値列（省略可）
+  aggfunc:
+    type: [string, array, object]
+    description: 集計関数（sum/mean/count/min/max/nunique/first/last など）
+  fill_value:
+    type: any
+    description: 欠損を埋める値
+  dropna:
+    type: boolean
+    description: 欠損行の除去
+  sort:
+    type: boolean
+    description: 並び替え
+  flatten_multiindex:
+    type: boolean
+    description: 'MultiIndexカラムを文字列にフラット化するか（既定: true）'
+  flatten_joiner:
+    type: string
+    description: 'フラット化時の結合子（既定: "__"）'
+outputs:
+  dataframe:
+    type: any
+    description: ピボット後の pandas DataFrame
+  rows:
+    type: array
+    description: レコード指向の行配列
+  summary:
+    type: object
+    description: 行数/列数/列名の要約
+requirements:
+  - pandas
+tags:
+  - table
+  - pivot
+description: |
+  pandas の pivot_table を用いて縦横変換（ピボット）を行うブロック。index/columns/values と aggfunc を
+  指定し、結果の MultiIndex 列は既定で文字列へフラット化する。
+
+

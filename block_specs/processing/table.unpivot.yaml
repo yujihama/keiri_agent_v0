@@ -1,0 +1,46 @@
+id: table.unpivot
+version: 0.1.0
+entrypoint: blocks/processing/table/unpivot.py:TableUnpivotBlock
+inputs:
+  dataframe:
+    type: any
+    description: pandas DataFrame（任意。無い場合は rows から生成）
+  rows:
+    type: array
+    description: list[object] 形式の行配列（任意）
+  id_vars:
+    type: [string, array]
+    description: そのまま保持する列名
+  value_vars:
+    type: [string, array]
+    description: 縦持ちへ展開する列名（未指定時は id_vars 以外）
+  var_name:
+    type: string
+    description: 生成する列名（元カラム名）
+  value_name:
+    type: string
+    description: 生成する列名（値）
+  ignore_index:
+    type: boolean
+    description: 既定 true
+outputs:
+  dataframe:
+    type: any
+    description: melt 後の pandas DataFrame
+  rows:
+    type: array
+    description: レコード指向の行配列
+  summary:
+    type: object
+    description: 行数/列数/列名の要約
+requirements:
+  - pandas
+tags:
+  - table
+  - melt
+  - unpivot
+description: |
+  pandas の melt を用いてワイド形式を縦持ちへ変換するブロック。id_vars/value_vars を指定して
+  列を展開し、結果を DataFrame と行配列で返す。
+
+

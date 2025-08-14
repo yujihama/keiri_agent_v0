@@ -151,57 +151,7 @@ class PlanRunner:
         except Exception:
             pass
 
-    def _write_event(self, path: Path, event: Dict[str, Any]) -> None:
-        # Deprecated in favor of core.plan.logger.write_event
-        write_event(event.get("run_id", ""), event)
-
-    def _build_graph(self, plan: Plan) -> nx.DiGraph:
-        g = nx.DiGraph()
-        for n in plan.graph:
-            g.add_node(n.id)
-        
-        def add_edges_from_placeholders(text: str, dest_id: str) -> None:
-            i = 0
-            while i < len(text):
-                if text[i : i + 2] == "${":
-                    j = text.find("}", i + 2)
-                    if j == -1:
-                        break
-                    inner = text[i + 2 : j]
-                    if not inner.startswith(("vars.", "env.", "config.")) and "." in inner:
-                        src = inner.split(".", 1)[0]
-                        if src:
-                            g.add_edge(src, dest_id)
-                    i = j + 1
-                else:
-                    i += 1
-
-        def _add_edges_from_value(val: Any, dest_id: str) -> None:
-            if isinstance(val, str):
-                add_edges_from_placeholders(val, dest_id)
-            elif isinstance(val, dict):
-                for vv in val.values():
-                    _add_edges_from_value(vv, dest_id)
-            elif isinstance(val, (list, tuple)):
-                for vv in val:
-                    _add_edges_from_value(vv, dest_id)
-
-        for n in plan.graph:
-            if n.type:
-                # Create edges for foreach/while references
-                if n.type == "loop" and n.foreach and isinstance(n.foreach.get("input"), str):
-                    add_edges_from_placeholders(str(n.foreach.get("input")), n.id)
-                if n.type == "loop" and n.while_:
-                    cond = n.while_.get("condition", {}) if isinstance(n.while_, dict) else {}
-                    expr = cond.get("expr") if isinstance(cond, dict) else None
-                    if isinstance(expr, str):
-                        add_edges_from_placeholders(expr, n.id)
-                # subflow: ignore; not analyzing child plan here
-                if n.type == "subflow":
-                    continue
-            for v in n.inputs.values():
-                _add_edges_from_value(v, n.id)
-        return g
+    # _write_event was deprecated in favor of core.plan.logger.write_event and has been removed.
 
     def run(
         self,
@@ -210,6 +160,7 @@ class PlanRunner:
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         parent_run_id: Optional[str] = None,
         resume_run_id: Optional[str] = None,
+        execution_context: Optional[Any] = None,
     ) -> Dict[str, Any]:
         if resume_run_id:
             run_id = resume_run_id
@@ -270,7 +221,9 @@ class PlanRunner:
             except Exception:
                 return "<unserializable>"
 
-        g = self._build_graph(plan)
+        # Build DAG from placeholders (shared utility)
+        from .graph_utils import build_dependency_graph
+        g = build_dependency_graph(plan)
         order = list(nx.topological_sort(g))
 
         results_by_alias: Dict[str, Any] = {}
@@ -729,75 +682,13 @@ class PlanRunner:
                     block = self.registry.get(node.block)
                     if isinstance(block, UIBlock):
                         inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
-                        # HITL対象ノードのみ待機。それ以外は従来通り即時レンダリング（スタブ）
-                        if self.default_ui_hitl:
-                            state = self._load_state(plan, run_id) or {}
-                            pending_ui = state.get("pending_ui")
-                            completed_map = state.get("ui_outputs") or {}
-                            force_ui = os.getenv("KEIRI_AGENT_FORCE_UI", "0") == "1"
-                            # JSON保存されたbytesを復元する関数
-                            def _decode_from_json(val):
-                                if isinstance(val, dict) and val.get("__type") == "b64bytes":
-                                    try:
-                                        return base64.b64decode(val.get("data", ""))
-                                    except Exception:
-                                        return b""
-                                if isinstance(val, dict):
-                                    return {kk: _decode_from_json(vv) for kk, vv in val.items()}
-                                if isinstance(val, list):
-                                    return [_decode_from_json(x) for x in val]
-                                return val
-
-                            # 別ノードのsubmitted pendingが残っていたら completed_map に移し、pendingをクリア
-                            if pending_ui and pending_ui.get("submitted") and pending_ui.get("node_id") != nid:
-                                node_saved = str(pending_ui.get("node_id"))
-                                outputs_saved = pending_ui.get("outputs", {})
-                                completed_map[node_saved] = outputs_saved
-                                state["ui_outputs"] = completed_map
-                                state["pending_ui"] = None
-                                self._save_state(plan, run_id, state)
-                                pending_ui = None
-
-                            # 既にこのノードの出力が保存済みならそれを使用
-                            out = None
-                            if not force_ui and str(nid) in completed_map:
-                                out = _decode_from_json(completed_map[str(nid)])
-                                emit({"type": "ui_reuse", "run_id": run_id, "node": nid})
-                                try:
-                                    export_log({
-                                        "phase": "reuse",
-                                        "node": nid,
-                                        "block": node.block,
-                                        "outputs": _summarize_for_log(out),
-                                    }, run_id=run_id, node_id=nid, tag="runner.block")
-                                except Exception:
-                                    pass
-                            elif not force_ui and pending_ui and pending_ui.get("node_id") == nid and pending_ui.get("submitted"):
-                                out = _decode_from_json(pending_ui.get("outputs", {}))
-                                # move to completed map and clear pending
-                                completed_map[str(nid)] = pending_ui.get("outputs", {})
-                                state["ui_outputs"] = completed_map
-                                state["pending_ui"] = None
-                                self._save_state(plan, run_id, state)
-                                emit({"type": "ui_submit", "run_id": run_id, "node": nid})
-                                try:
-                                    export_log({
-                                        "phase": "submit",
-                                        "node": nid,
-                                        "block": node.block,
-                                        "outputs": _summarize_for_log(out),
-                                    }, run_id=run_id, node_id=nid, tag="runner.block")
-                                except Exception:
-                                    pass
-                            else:
-                                # 強制UI表示時は、過去の保存を無視して pending を再生成
-                                if force_ui:
-                                    try:
-                                        if str(nid) in completed_map:
-                                            completed_map.pop(str(nid), None)
-                                        state["ui_outputs"] = completed_map
-                                    except Exception:
-                                        pass
+                        # UIブロックの統合処理
+                        out = self._handle_ui_block(block, ctx, inputs, execution_context, nid)
+                        
+                        # UI待機が必要な場合は処理を中断
+                        if out.get("metadata", {}).get("submitted") is False:
+                            if self.default_ui_hitl:
+                                state = self._load_state(plan, run_id) or {}
                                 form_info = {
                                     "node_id": nid,
                                     "run_id": run_id,
@@ -808,40 +699,32 @@ class PlanRunner:
                                 state["pending_ui"] = form_info
                                 self._save_state(plan, run_id, state)
                                 emit({"type": "ui_wait", "run_id": run_id, "node": nid})
+                                return results_by_alias
+                            else:
+                                # 非HITLモードでは即座にレンダリング
+                                emit({"type": "node_start", "run_id": run_id, "node": nid})
+                                _t0 = perf_counter()
                                 try:
                                     export_log({
-                                        "phase": "wait",
+                                        "phase": "start",
                                         "node": nid,
                                         "block": node.block,
                                         "inputs": _summarize_for_log(inputs),
                                     }, run_id=run_id, node_id=nid, tag="runner.block")
                                 except Exception:
                                     pass
-                                return results_by_alias
-                        else:
-                            emit({"type": "node_start", "run_id": run_id, "node": nid})
-                            _t0 = perf_counter()
-                            try:
-                                export_log({
-                                    "phase": "start",
-                                    "node": nid,
-                                    "block": node.block,
-                                    "inputs": _summarize_for_log(inputs),
-                                }, run_id=run_id, node_id=nid, tag="runner.block")
-                            except Exception:
-                                pass
-                            out = block.render(ctx, inputs)
-                            elapsed_ms = int((perf_counter() - _t0) * 1000)
-                            emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
-                            try:
-                                export_log({
-                                    "phase": "finish",
-                                    "node": nid,
-                                    "block": node.block,
-                                    "outputs": _summarize_for_log(out),
-                                }, run_id=run_id, node_id=nid, tag="runner.block")
-                            except Exception:
-                                pass
+                                out = block.render(ctx, inputs, execution_context)
+                                elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
+                                try:
+                                    export_log({
+                                        "phase": "finish",
+                                        "node": nid,
+                                        "block": node.block,
+                                        "outputs": _summarize_for_log(out),
+                                    }, run_id=run_id, node_id=nid, tag="runner.block")
+                                except Exception:
+                                    pass
 
                         for local_out, alias in node.outputs.items():
                             if isinstance(out, dict) and local_out in out:
@@ -989,23 +872,30 @@ class PlanRunner:
                                 continue
                             block = self.registry.get(node.block)
                             if isinstance(block, UIBlock):
-                                if self.default_ui_hitl:
-                                    state = self._load_state(plan, run_id) or {}
-                                    force_ui = os.getenv("KEIRI_AGENT_FORCE_UI", "0") == "1"
-                                    # 強制UI時は既存完了を破棄
-                                    if force_ui:
-                                        try:
-                                            cm = state.get("ui_outputs") or {}
-                                            if str(nid) in cm:
-                                                cm.pop(str(nid), None)
-                                                state["ui_outputs"] = cm
-                                        except Exception:
-                                            pass
-                                    state["pending_ui"] = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
-                                    self._save_state(plan, run_id, state)
-                                    emit({"type": "ui_wait", "run_id": run_id, "node": nid})
-                                    return results_by_alias
-                                out = block.render(ctx, inputs)
+                                # UIブロックの統合処理
+                                out = self._handle_ui_block(block, ctx, inputs, execution_context, nid)
+                                
+                                # UI待機が必要な場合は処理を中断
+                                if out.get("metadata", {}).get("submitted") is False:
+                                    if self.default_ui_hitl:
+                                        state = self._load_state(plan, run_id) or {}
+                                        force_ui = os.getenv("KEIRI_AGENT_FORCE_UI", "0") == "1"
+                                        # 強制UI時は既存完了を破棄
+                                        if force_ui:
+                                            try:
+                                                cm = state.get("ui_outputs") or {}
+                                                if str(nid) in cm:
+                                                    cm.pop(str(nid), None)
+                                                    state["ui_outputs"] = cm
+                                            except Exception:
+                                                pass
+                                        state["pending_ui"] = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
+                                        self._save_state(plan, run_id, state)
+                                        emit({"type": "ui_wait", "run_id": run_id, "node": nid})
+                                        return results_by_alias
+                                    else:
+                                        # 非HITLモードでは即座にレンダリング
+                                        out = block.render(ctx, inputs, execution_context)
                             else:
                                 out = block.run(ctx, inputs)
                             for local_out, alias in node.outputs.items():
@@ -1136,24 +1026,30 @@ class PlanRunner:
                             continue
                         block_obj = self.registry.get(node.block)
                         if isinstance(block_obj, UIBlock):
-                            if self.default_ui_hitl:
-                                state = self._load_state(plan, run_id) or {}
-                                form_info = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
-                                state["pending_ui"] = form_info
-                                self._save_state(plan, run_id, state)
-                                emit({"type": "ui_wait", "node": nid})
-                                emit({
-                                    "type": "schedule_global_pass_finish",
-                                    "executed": executed_global,
-                                    "leftover": [n for n in remaining if n not in executed_global],
-                                })
-                                return results_by_alias
-                            else:
-                                emit({"type": "node_start", "run_id": run_id, "node": nid})
-                                _t0 = perf_counter()
-                                out = block_obj.render(ctx, inputs)
-                                elapsed_ms = int((perf_counter() - _t0) * 1000)
-                                emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
+                            # UIブロックの統合処理
+                            out = self._handle_ui_block(block_obj, ctx, inputs, execution_context, nid)
+                            
+                            # UI待機が必要な場合は処理を中断
+                            if out.get("metadata", {}).get("submitted") is False:
+                                if self.default_ui_hitl:
+                                    state = self._load_state(plan, run_id) or {}
+                                    form_info = {"node_id": nid, "run_id": run_id, "inputs": inputs, "submitted": False}
+                                    state["pending_ui"] = form_info
+                                    self._save_state(plan, run_id, state)
+                                    emit({"type": "ui_wait", "node": nid})
+                                    emit({
+                                        "type": "schedule_global_pass_finish",
+                                        "executed": executed_global,
+                                        "leftover": [n for n in remaining if n not in executed_global],
+                                    })
+                                    return results_by_alias
+                                else:
+                                    # 非HITLモードでは即座にレンダリング
+                                    emit({"type": "node_start", "run_id": run_id, "node": nid})
+                                    _t0 = perf_counter()
+                                    out = block_obj.render(ctx, inputs, execution_context)
+                                    elapsed_ms = int((perf_counter() - _t0) * 1000)
+                                    emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
                         else:
                             # Processing block with minimal retry policy
                             def _exec_block(block_inst: ProcessingBlock, node_id: str, inputs_dict: Dict[str, Any]):
@@ -1280,5 +1176,33 @@ class PlanRunner:
             pass
         emit({"type": "finish", "run": run_id, "plan": plan.id})
         return results_by_alias
+
+    def _handle_headless_ui(self, block: UIBlock, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Any) -> Dict[str, Any]:
+        """ヘッドレスモードでのUIブロック処理"""
+        # 実行コンテキストからモック応答を取得
+        mock_response = execution_context.get_ui_mock_response(block.id, ctx.vars.get("__node_id", ""))
+        if mock_response:
+            return mock_response
+        
+        # フォールバック: ブロックのヘッドレス応答
+        if hasattr(block, '_headless_response'):
+            return block._headless_response(inputs, execution_context)
+        
+        # 最終フォールバック: 空の応答
+        return {"metadata": {"submitted": True, "headless": True}}
+
+    def _handle_ui_block(self, block: UIBlock, ctx: BlockContext, inputs: Dict[str, Any], 
+                         execution_context: Optional[Any] = None, node_id: str = "") -> Dict[str, Any]:
+        """UIブロックの統合処理"""
+        # ヘッドレスモードでの自動処理
+        if execution_context and getattr(execution_context, 'headless_mode', False):
+            return self._handle_headless_ui(block, ctx, inputs, execution_context)
+        
+        # 通常のUI処理
+        if hasattr(block, 'render'):
+            return block.render(ctx, inputs, execution_context)
+        else:
+            # フォールバック
+            return {"metadata": {"submitted": False, "error": "UI block not supported"}}
 
 

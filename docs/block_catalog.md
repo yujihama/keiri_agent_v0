@@ -109,6 +109,18 @@
 - **出力**: `answer`, `intermediate_steps?`, `summary{model,temperature,num_dataframes,...}`。
 - **備考**: LLMキー必須。巨大データは先頭サンプリング。
 
+#### table.pivot 0.1.0
+- **ファイル**: `core/blocks/processing/table/pivot.py`
+- **用途**: pandas の `pivot_table` により縦横変換（ピボット）。
+- **入力**: `dataframe?`, `rows?`, `index`, `columns`, `values?`, `aggfunc="sum"`, `fill_value?`, `dropna=true`, `sort=true`, `flatten_multiindex=true`, `flatten_joiner="__"`。
+- **出力**: `dataframe`, `rows`, `summary{rows,cols,columns}`。
+
+#### table.unpivot 0.1.0
+- **ファイル**: `core/blocks/processing/table/unpivot.py`
+- **用途**: pandas の `melt` によりワイド→ロング変換（アンピボット）。
+- **入力**: `dataframe?`, `rows?`, `id_vars?`, `value_vars?`, `var_name="variable"`, `value_name="value"`, `ignore_index=true`。
+- **出力**: `dataframe`, `rows`, `summary{rows,cols,columns}`。
+
 ### Transforms
 
 #### transforms.compute_fiscal_quarter 0.1.0

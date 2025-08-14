@@ -589,6 +589,51 @@ def main():
             progress = st.progress(0, text="実行中...")
             status_area = st.empty()
 
+            # 直近イベントの簡易ログ（読みやすいメッセージで表示）
+            recent_msgs: list[tuple[str, str]] = []  # (severity, message)
+            MAX_RECENT = 1
+
+            def _format_event_message(ev: dict) -> tuple[str, str]:
+                et = ev.get("type")
+                node = ev.get("node")
+                if et == "loop_start":
+                    return "info", f"ループ開始: ノード {node}"
+                if et == "loop_finish":
+                    return "success", f"ループ完了: ノード {node}"
+                if et == "loop_iter_start":
+                    return "info", f"イテレーション開始: ノード {node}"
+                if et == "loop_iter_finish":
+                    return "success", f"イテレーション完了: ノード {node}"
+                if et == "subflow_start":
+                    return "info", "サブフロー開始"
+                if et == "node_finish":
+                    ms = ev.get("elapsed_ms")
+                    att = ev.get("attempts")
+                    detail: list[str] = []
+                    if ms is not None:
+                        detail.append(f"{ms} ms")
+                    if att is not None:
+                        detail.append(f"試行 {att}")
+                    suffix = f"（{', '.join(detail)}）" if detail else ""
+                    return "success", f"完了: ノード {node}{suffix}"
+                if et == "error":
+                    msg = ev.get("message") or ev.get("error") or ""
+                    return "error", f"エラー: ノード {node} {msg}"
+                return "info", f"{et}: ノード {node}"
+
+            def _push_and_render(severity: str, message: str) -> None:
+                recent_msgs.append((severity, message))
+                if len(recent_msgs) > MAX_RECENT:
+                    del recent_msgs[0 : len(recent_msgs) - MAX_RECENT]
+                with status_area.container():
+                    for sev, msg in recent_msgs:
+                        if sev == "error":
+                            st.error(msg)
+                        elif sev == "success":
+                            st.success(msg)
+                        else:
+                            st.info(msg)
+
             total_estimate = max(1, len(plan.graph))
             done = {"count": 0}
             events_for_dag = []
@@ -623,16 +668,16 @@ def main():
                     done["count"] += 1
                     progress.progress(min(1.0, done["count"] / total_estimate), text=f"{done['count']}/{total_estimate}")
                 if et in {"loop_start", "loop_finish", "loop_iter_start", "loop_iter_finish", "subflow_start"}:
-                    status_area.write(ev)
+                    sev, msg = _format_event_message(ev)
+                    _push_and_render(sev, msg)
                 if et == "error":
-                    status_area.error(ev)
+                    sev, msg = _format_event_message(ev)
+                    _push_and_render(sev, msg)
                 if et == "start":
                     st.session_state["last_run_id"] = ev.get("run_id")
                 if et == "node_finish":
-                    ms = ev.get("elapsed_ms")
-                    att = ev.get("attempts")
-                    if ms is not None or att is not None:
-                        status_area.write({"node": ev.get("node"), "elapsed_ms": ms, "attempts": att})
+                    sev, msg = _format_event_message(ev)
+                    _push_and_render(sev, msg)
                 if et == "ui_wait":
                     # 次の描画で即時にUIを出せるようセッションに保持
                     st.session_state["last_pending_ui"] = ev
@@ -662,7 +707,8 @@ def main():
             except Exception:
                 pass
             progress.progress(1.0, text="完了")
-            st.json(results)
+            with st.expander("結果の詳細(JSON)", expanded=False):
+                st.json(results)
             # 出力方法: vars.output_method に従い UI を切り替え
             try:
                 output_method = (plan.vars or {}).get("output_method", "download")

@@ -36,11 +36,10 @@ class InteractiveInputBlock(UIBlock):
     id = "ui.interactive_input"
     version = "0.1.0"
 
-    def render(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        # ヘッドレスモードの処理
-        if os.getenv("KEIRI_AGENT_HEADLESS", "0") == "1":
-            st.info("headless mode")
-            return self._headless_response(inputs)
+    def render(self, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Optional[Any] = None) -> Dict[str, Any]:
+        # ヘッドレスモードの処理（引数ベース）
+        if execution_context and getattr(execution_context, 'headless_mode', False):
+            return self._headless_response(inputs, execution_context)
         
         mode = inputs.get("mode", "collect")
         message = inputs.get("message", "")
@@ -667,39 +666,75 @@ Requirements:
         
         return errors
     
-    def _headless_response(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """ヘッドレスモード用のレスポンス"""
+    def _headless_response(self, inputs: Dict[str, Any], execution_context: Optional[Any] = None) -> Dict[str, Any]:
+        """ヘッドレスモード用のレスポンス（設定ベース）"""
+        # 実行コンテキストからモック応答を取得
+        if execution_context:
+            mock_response = execution_context.get_ui_mock_response(self.id, inputs.get("node_id", ""))
+            if mock_response:
+                return mock_response
+        
+        # フォールバック: 既存のダミーデータ
         mode = inputs.get("mode", "collect")
         
         if mode in ("collect", "inquire"):
-            # テスト用のダミーデータを返す（collect/inquire 共通）
-            collected_data: Dict[str, Any] = {}
-            for req in inputs.get("requirements", []):
-                field_id = req.get("id")
-                field_type = req.get("type")
-                if not field_id:
-                    continue
-                if field_type == "file":
-                    collected_data[field_id] = b"dummy file content"
-                elif field_type == "files":
-                    collected_data[field_id] = [b"dummy file content"]
-                elif field_type == "folder":
-                    collected_data[field_id] = b"dummy zip content"
-                elif field_type == "text":
-                    collected_data[field_id] = f"dummy_{field_id}"
-                elif field_type == "select":
-                    opts = req.get("options") or []
-                    default_val = req.get("default")
-                    if default_val is not None:
-                        collected_data[field_id] = default_val
+            # 実行コンテキストからファイル入力を自動解決
+            if execution_context:
+                from core.plan.file_handler import FileInputHandler
+                file_handler = FileInputHandler(execution_context)
+                collected_data = file_handler.auto_resolve_file_inputs(inputs.get("requirements", []))
+                
+                # 残りのフィールドはデフォルト値で埋める
+                for req in inputs.get("requirements", []):
+                    field_id = req.get("id")
+                    field_type = req.get("type")
+                    if not field_id or field_id in collected_data:
+                        continue
+                    
+                    if field_type == "text":
+                        collected_data[field_id] = f"auto_{field_id}"
+                    elif field_type == "select":
+                        opts = req.get("options") or []
+                        default_val = req.get("default")
+                        if default_val is not None:
+                            collected_data[field_id] = default_val
+                        else:
+                            collected_data[field_id] = (opts[0] if isinstance(opts, list) and opts else None)
+                    elif field_type == "boolean":
+                        collected_data[field_id] = True
+                    elif field_type == "number":
+                        collected_data[field_id] = 42
                     else:
-                        collected_data[field_id] = (opts[0] if isinstance(opts, list) and opts else None)
-                elif field_type == "boolean":
-                    collected_data[field_id] = True
-                elif field_type == "number":
-                    collected_data[field_id] = 42
-                else:
-                    collected_data[field_id] = f"dummy_{field_id}"
+                        collected_data[field_id] = f"auto_{field_id}"
+            else:
+                # フォールバック: 既存のダミーデータ
+                collected_data: Dict[str, Any] = {}
+                for req in inputs.get("requirements", []):
+                    field_id = req.get("id")
+                    field_type = req.get("type")
+                    if not field_id:
+                        continue
+                    if field_type == "file":
+                        collected_data[field_id] = b"dummy file content"
+                    elif field_type == "files":
+                        collected_data[field_id] = [b"dummy file content"]
+                    elif field_type == "folder":
+                        collected_data[field_id] = b"dummy zip content"
+                    elif field_type == "text":
+                        collected_data[field_id] = f"dummy_{field_id}"
+                    elif field_type == "select":
+                        opts = req.get("options") or []
+                        default_val = req.get("default")
+                        if default_val is not None:
+                            collected_data[field_id] = default_val
+                        else:
+                            collected_data[field_id] = (opts[0] if isinstance(opts, list) and opts else None)
+                    elif field_type == "boolean":
+                        collected_data[field_id] = True
+                    elif field_type == "number":
+                        collected_data[field_id] = 42
+                    else:
+                        collected_data[field_id] = f"dummy_{field_id}"
             
             return {
                 "collected_data": collected_data,
