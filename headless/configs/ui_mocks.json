@@ -15,6 +15,28 @@
         "mode": "collect"
       }
     },
+    "collect_po": {
+      "collected_data": {
+        "po_csv": "auto_resolve"
+      },
+      "approved": true,
+      "response": null,
+      "metadata": {
+        "submitted": true,
+        "mode": "collect"
+      }
+    },
+    "collect_invoices": {
+      "collected_data": {
+        "invoices_csv": "auto_resolve"
+      },
+      "approved": true,
+      "response": null,
+      "metadata": {
+        "submitted": true,
+        "mode": "collect"
+      }
+    },
     "select_quarter": {
       "collected_data": {
         "fiscal_year": "2024",

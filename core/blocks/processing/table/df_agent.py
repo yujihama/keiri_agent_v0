@@ -5,6 +5,7 @@ import os
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.plan.logger import export_log
+from core.plan.llm_factory import build_chat_llm
 
 
 class PandasDataframeAgentBlock(ProcessingBlock):
@@ -357,16 +358,17 @@ class PandasDataframeAgentBlock(ProcessingBlock):
             )
 
         # LLM 準備
-        from langchain_openai import ChatOpenAI
-
         model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"
         temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0"))
         # Always verbose for this tool
         callback_handler = self._make_verbose_callback(ctx)
+
+        # Use factory for OpenAI/Azure selection
         try:
-            llm = ChatOpenAI(model=model_name, temperature=temperature, callbacks=[callback_handler])
-        except Exception:
-            llm = ChatOpenAI(model=model_name, temperature=temperature)
+            llm, model_label = build_chat_llm(temperature=temperature, callbacks=[callback_handler])
+        except TypeError:
+            # Older signature without callbacks
+            llm, model_label = build_chat_llm(temperature=temperature)
 
         # pandas agent 準備（古/新 API 併用対応）
         allow_dangerous_code = True
@@ -465,7 +467,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                 datasets_meta.append({"name": name})
 
         summary = {
-            "model": model_name,
+            "model": model_label,
             "temperature": temperature,
             "num_dataframes": len(pairs),
             "header_type": header_type,

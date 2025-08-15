@@ -1,0 +1,30 @@
+id: notifier.notify
+version: 0.1.0
+entrypoint: blocks/processing/notifier/notify.py:NotifyBlock
+inputs:
+  provider:
+    type: string
+    enum: ["slack", "teams", "email", "webhook"]
+  target:
+    type: object
+    description: "宛先（例: { channel: '#ops' } / { webhook_key: 'TEAMS_WEBHOOK_URL' } / { to: ['a@x.com'] })"
+  message:
+    type: string
+  title:
+    type: string
+  attachments:
+    type: array
+    description: 任意の添付/カードJSON
+  options:
+    type: object
+    description: 優先度/テンプレID/プロバイダ固有設定キー
+outputs:
+  ok:
+    type: boolean
+  response:
+    type: object
+requirements: []
+description: |
+  通知の汎用ブロック。プロバイダは `provider` で切替、資格情報は `.env`/config を参照し Plan に直書きしない。
+
+

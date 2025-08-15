@@ -1,0 +1,23 @@
+id: security.attestation.sign_manifest
+version: 0.1.0
+entrypoint: blocks/processing/security/attestation.py:SignManifestBlock
+inputs:
+  manifest:
+    type: object
+    description: Plan/Spec/環境/ハッシュ/出力の束ね
+  key_ref:
+    type: string
+    description: 署名鍵の参照名（`.env`/KMS等のキー識別子）。生秘密鍵はPlanに含めない。
+  algo:
+    type: string
+    enum: ["ed25519", "rsa"]
+outputs:
+  signature:
+    type: string
+  signed_manifest:
+    type: object
+requirements: []
+description: |
+  実行マニフェストに署名し、非否認性を担保するブロック。鍵は外部参照。
+
+

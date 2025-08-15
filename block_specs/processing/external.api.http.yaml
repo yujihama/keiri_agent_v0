@@ -1,0 +1,36 @@
+id: external.api.http
+version: 0.1.0
+entrypoint: blocks/processing/external/api_http.py:ExternalHTTPApiBlock
+inputs:
+  method:
+    type: string
+    enum: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+  url:
+    type: string
+  headers:
+    type: object
+  params:
+    type: object
+  body:
+    type: object
+  timeout_sec:
+    type: number
+  retry:
+    type: object
+    description: "{ max_retries?: 3, backoff_ms?: 200 }"
+outputs:
+  status:
+    type: integer
+  response_json:
+    type: object
+  response_text:
+    type: string
+  headers:
+    type: object
+  summary:
+    type: object
+requirements: []
+description: |
+  汎用HTTP API呼び出しブロック。セキュア情報は `.env` 由来の設定で注入し、Planに生値を埋め込まない方針。
+
+

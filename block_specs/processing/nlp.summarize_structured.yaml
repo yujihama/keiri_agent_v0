@@ -1,0 +1,18 @@
+id: ai.process_llm
+version: 1.1.0
+entrypoint: blocks/processing/ai/process_llm.py:ProcessLLMBlock
+inputs:
+  evidence_data:
+    type: object
+  instruction:
+    type: string
+  output_schema:
+    type: object
+outputs:
+  results:
+    type: object
+requirements: []
+description: |
+  構造化データの要約を LLМ/規則で行い、所定スキーマで返却するブロック。
+
+

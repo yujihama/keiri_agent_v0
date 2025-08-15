@@ -1,0 +1,24 @@
+id: ui.diff_viewer
+version: 0.1.0
+entrypoint: blocks/ui/diff_viewer.py:DiffViewerUIBlock
+inputs:
+  before:
+    type: object
+  after:
+    type: object
+  message:
+    type: string
+  widget_key:
+    type: string
+outputs:
+  diffs:
+    type: array
+  approved:
+    type: boolean
+  metadata:
+    type: object
+requirements: []
+description: |
+  before/after の差分を表示し、承認/差戻しを収集するUIブロック。差分計算は処理側でも良いが簡易計算を内蔵してもよい。
+
+

@@ -1,0 +1,22 @@
+id: data.quality.validate_rules
+version: 0.1.0
+entrypoint: blocks/processing/data_quality/validate_rules.py:ValidateDataQualityRulesBlock
+inputs:
+  items:
+    type: array
+  rules:
+    type: array
+    description: '[{ id, type: "required"|"range"|"regex"|"unique", field, value?, pattern?, min?, max? }]'
+  options:
+    type: object
+    description: strict/lenient、重複許容範囲など
+outputs:
+  violations:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  データ品質（DQ）ルールの評価を行う汎用ブロック。必須、範囲、正規表現、一意性などの基本検証に対応。
+
+

@@ -1,0 +1,19 @@
+id: data.provenance.capture
+version: 0.1.0
+entrypoint: blocks/processing/data_quality/provenance_capture.py:ProvenanceCaptureBlock
+inputs:
+  items:
+    type: array
+  context:
+    type: object
+    description: 由来/入手元/処理経路/担当/タイムスタンプなど
+outputs:
+  items_with_provenance:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  入出力アイテムに来歴メタデータ（provenance）を付与するブロック。Evidence-first の証跡整備を支援。
+
+

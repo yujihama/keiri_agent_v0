@@ -1,0 +1,9 @@
+vendor_id,vendor_name,invoice_no,amount,description
+V001,Acme Corp,INV-1001,5000,Office supplies purchase
+V001,Acme Corp,INV-1001,5000,Office supplies purchase duplicate
+V002,Globex Inc,INV-2001,7500,Consulting services for Q1
+V002,Globex Inc,INV-2002,7600,Consulting service quarter one
+V003,Soylent Co,INV-3001,12000,Green bars shipment
+V003,Soylent Co,INV-3002,11900,Shipment of green nutritional bars
+
+

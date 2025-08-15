@@ -1,0 +1,25 @@
+id: control.sod_check
+version: 0.1.0
+entrypoint: blocks/processing/control/sod_check.py:SodCheckBlock
+inputs:
+  assignments:
+    type: array
+    description: '[{ user_id, roles: ["roleA", ...], actions?: ["post_journal", ...]}]'
+  sod_matrix:
+    type: object
+    description: |
+      職務分掌マトリクス。例: { conflicts: [ { roles_any: ["requester","approver"], rule: "mutual_exclusion" } ] }
+  scope:
+    type: object
+    description: チェック範囲（期間/部門/金額閾値など）
+outputs:
+  violations:
+    type: array
+    description: '[{ user_id, conflict: {rule, roles}, evidence? }]'
+  summary:
+    type: object
+requirements: []
+description: |
+  職務分掌（SoD）違反の検出を行う汎用ブロック。マトリクス定義は抽象的に設計し、業務固有のロール名/アクションはPlan側で与える。
+
+

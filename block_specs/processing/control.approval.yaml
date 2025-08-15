@@ -1,0 +1,35 @@
+id: control.approval
+version: 0.1.0
+entrypoint: blocks/processing/control/approval.py:ApprovalControlBlock
+inputs:
+  route_definition:
+    type: object
+    description: |
+      承認経路の定義。例:
+        { levels: [
+            { id: "L1", approvers: ["user01","role:manager"], rule: { type: "any"|"all"|"n_of_m", n?: 2 } },
+            { id: "L2", approvers: ["user10"], rule: { type: "all" } }
+          ], due_date?: "2025-01-31T00:00:00Z" }
+  decisions:
+    type: array
+    description: |
+      収集済みの承認決裁ログ。例: [{ level_id, approver_id, decision: "approve"|"reject", comment?, timestamp? }]
+  context:
+    type: object
+    description: 承認対象の概要（件名、合計額、根拠リンクなど）
+outputs:
+  approved:
+    type: boolean
+  route_log:
+    type: object
+    description: 正規化された承認履歴（不足レベル・重複・順序違反などの検出含む）
+  violations:
+    type: array
+    description: ポリシー/順序/必須承認者の逸脱
+requirements: []
+description: |
+  多段承認の判定と承認経路の整合性検証を行う抽象ブロック。
+  - UI は原則 `ui.interactive_input` で収集し、本ブロックは判定とログ整形に特化。
+  - SoDの検証は `control.sod_check` を併用。
+
+

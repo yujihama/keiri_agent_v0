@@ -1,0 +1,34 @@
+id: control.sampling
+version: 0.1.0
+entrypoint: blocks/processing/control/sampling.py:SamplingBlock
+inputs:
+  population:
+    type: array
+    description: サンプリング対象集団（list[object]）
+  method:
+    type: string
+    enum: ["random", "systematic", "attribute", "risk_weighted"]
+  size:
+    type: integer
+    description: サンプル件数（methodにより割合指定を許容してもよい）
+  attribute_rules:
+    type: array
+    description: 'method=attribute のときの抽出ルール [{ field, operator, value }]'
+  risk_weights:
+    type: object
+    description: "method=risk_weighted のときの重み { key->weight }"
+  seed:
+    type: integer
+    description: 乱数シード（決定性確保）
+outputs:
+  samples:
+    type: array
+  excluded:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  監査/内部統制で汎用に使えるサンプリングブロック。決定性（seed）とルールベース抽出を両立。
+
+

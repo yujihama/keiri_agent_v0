@@ -1,0 +1,33 @@
+id: matching.record_linkage
+version: 0.1.0
+entrypoint: blocks/processing/matching/record_linkage.py:RecordLinkageBlock
+inputs:
+  left:
+    type: array
+  right:
+    type: array
+  strategy:
+    type: string
+    enum: ["exact", "fuzzy", "hybrid"]
+  keys:
+    type: array
+    description: 'キー定義（[{left: "po_no", right: "order_no", type: "string"|"number"|"date"}]）'
+  fuzzy:
+    type: object
+    description: 類似度の計算方法（トークンソート、Jaro-Winkler 等）と閾値
+  window:
+    type: integer
+    description: ブロッキング/ウィンドウサイズ（パフォーマンス対策）
+outputs:
+  matches:
+    type: array
+  candidates:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  レコード照合の抽象化ブロック。exact/fuzzy/hybrid を切り替え可能で、キーと型、ブロッキングも指定できる。
+  既存の `transforms.filter`/`transforms.pick` と組み合わせ、`control.policy_enforce` で許容誤差/検証を適用可能。
+
+

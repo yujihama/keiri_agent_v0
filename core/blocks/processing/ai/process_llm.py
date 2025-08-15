@@ -8,6 +8,7 @@ from core.blocks.base import BlockContext, ProcessingBlock
 from core.errors import BlockError, BlockException, ErrorCode, create_input_error, create_external_error, wrap_exception
 from pydantic import BaseModel, Field, create_model, ConfigDict
 from core.plan.logger import export_log
+from core.plan.llm_factory import build_chat_llm
 
 
 def _default_output_schema() -> Dict[str, Any]:
@@ -142,19 +143,20 @@ class ProcessLLMBlock(ProcessingBlock):
         if answer_text:
             try:
                 parsed = json.loads(answer_text)
-                candidate: Dict[str, Any]
                 if isinstance(parsed, dict) and "results" in parsed:
-                    cand_summary = parsed.get("summary")
-                    candidate = {
-                        "results": parsed.get("results"),
-                        "summary": cand_summary if isinstance(cand_summary, dict) else {},
-                    }
+                    results_val = parsed.get("results") or []
+                    summary_val = parsed.get("summary") or {}
                 elif isinstance(parsed, list):
-                    candidate = {"results": parsed, "summary": {}}
+                    results_val = parsed
+                    summary_val = {}
+                elif isinstance(parsed, dict):
+                    # Single object → wrap as one result
+                    results_val = [parsed]
+                    summary_val = {}
                 else:
-                    candidate = {"results": [], "summary": {}}
-                structured_model = DynamicOutModel.model_validate(candidate)
-                structured = structured_model.model_dump()
+                    results_val = []
+                    summary_val = {}
+
                 summary = {
                     "files": 0,
                     "tables": 0,
@@ -163,10 +165,11 @@ class ProcessLLMBlock(ProcessingBlock):
                     "group_key": inputs.get("group_key"),
                 }
                 try:
-                    export_log({"mode": "fastpath", "results_keys": list(structured.keys()), "files": 0, "tables": 0}, ctx=ctx, tag="ai.process_llm")
+                    keys = list(results_val[0].keys()) if (isinstance(results_val, list) and results_val and isinstance(results_val[0], dict)) else []
+                    export_log({"mode": "fastpath", "results_item_keys": keys, "files": 0, "tables": 0}, ctx=ctx, tag="ai.process_llm")
                 except Exception:
                     pass
-                return {"results": structured, "summary": summary}
+                return {"results": results_val, "summary": summary_val or summary}
             except Exception:
                 # fallthrough to LLM path
                 pass
@@ -257,7 +260,6 @@ class ProcessLLMBlock(ProcessingBlock):
                         if k == "rows":
                             rows_preview = tbl.get("rows_excerpt", [])  # type: ignore[assignment]
 
-            from langchain_openai import ChatOpenAI
             from langchain_core.messages import SystemMessage, HumanMessage
 
             default_sys_prompt = (
@@ -276,9 +278,8 @@ class ProcessLLMBlock(ProcessingBlock):
                 "rows": rows_preview,
                 "raw_answer": answer_text,
             }
-            model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"
             temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0"))
-            llm = ChatOpenAI(model=model_name, temperature=temperature)
+            llm, model_label = build_chat_llm(temperature=temperature)
             # すでに生成済みの動的出力モデルを使用
             structured_llm = llm.with_structured_output(DynamicOutModel)
             # スキーマもヒントとして渡す（モデル側の自己整合性を高める）
@@ -294,7 +295,7 @@ class ProcessLLMBlock(ProcessingBlock):
             summary = {
                 "files": len(docs),
                 "tables": len(tables),
-                "model": model_name,
+                "model": model_label,
                 "temperature": temperature,
                 "group_key": inputs.get("group_key"),
             }

@@ -12,8 +12,17 @@
 
 1. 依存関係のインストール
    - `pip install -r requirements.txt`
-2. LLM を利用するプランでは `.env` に API キーを設定
-   - `OPENAI_API_KEY` または `AZURE_OPENAI_API_KEY` を設定
+2. LLM を利用するプランでは `.env` に API を設定（OpenAI または Azure OpenAI）
+   - OpenAI（非Azure）最小:
+     - `OPENAI_API_KEY=<your openai key>`
+     - 任意: `OPENAI_BASE_URL`, `OPENAI_ORG_ID`
+   - Azure OpenAI 最小:
+     - `AZURE_OPENAI_API_KEY=<your azure key>`
+     - `AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/`
+     - `AZURE_OPENAI_DEPLOYMENT=<deployment name>`（例: `gpt-4o-mini`）
+     - 任意: `AZURE_OPENAI_API_VERSION`（既定 `2024-02-15-preview`）
+   - 明示的にプロバイダーを固定したい場合: `KEIRI_AGENT_LLM_PROVIDER=azure` または `openai`
+   - モデル名/デプロイ名: `KEIRI_AGENT_LLM_MODEL`（OpenAI では model、Azure では deployment 名として利用）
 
 ### 実行コマンド（プロジェクトルートから）
 

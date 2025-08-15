@@ -1,0 +1,23 @@
+id: scheduler.trigger
+version: 0.1.0
+entrypoint: blocks/processing/scheduler/trigger.py:SchedulerTriggerBlock
+inputs:
+  schedule:
+    type: object
+    description: "cron または ISO8601 反復表現。例: { cron: '0 6 * * *' }"
+  start_from:
+    type: string
+    description: 初回基準時刻（ISO8601）
+  jitter_sec:
+    type: integer
+    description: ジッター（負荷分散用）
+outputs:
+  triggered:
+    type: boolean
+  next_run_at:
+    type: string
+requirements: []
+description: |
+  定期/イベントトリガの抽象ブロック。実運用では外部スケジューラ連携を想定しつつ、Planでは抽象化して扱う。
+
+

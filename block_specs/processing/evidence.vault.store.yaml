@@ -1,0 +1,24 @@
+id: evidence.vault.store
+version: 0.1.0
+entrypoint: blocks/processing/evidence/vault_store.py:EvidenceVaultStoreBlock
+inputs:
+  items:
+    type: array
+    description: 保管対象（{ name, bytes|base64, metadata? } の配列）
+  retention_policy:
+    type: object
+    description: 保持期間/リーガルホールド/改ざん検知設定
+  access_policy:
+    type: object
+    description: アクセス制御（ロール/スコープ）
+outputs:
+  stored:
+    type: array
+    description: 収納結果（idやハッシュなど）
+  summary:
+    type: object
+requirements: []
+description: |
+  証跡（Evidence）の金庫保管ブロック。暗号化・保持期間・改ざん検知・アクセス制御は実装層でプラガブルに。
+
+

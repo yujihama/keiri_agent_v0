@@ -3,7 +3,9 @@
   "journal_csv": "tests/data/retirement_data/退職給付金勘定元帳.csv",
   "salary_csv": "tests/data/retirement_data/給与明細一覧表.csv",
   "ledger_csv": "tests/data/retirement_data/退職給付金勘定元帳.csv",
-  "workbook": "tests/data/retirement_data/退職給付ワークブック.xlsx"
+  "workbook": "tests/data/retirement_data/退職給付ワークブック.xlsx",
+  "po_csv": "tests/data/po_policy/po_data.csv",
+  "invoices_csv": "tests/data/invoices/invoices.csv"
 }
 
 

@@ -14,11 +14,11 @@ from core.plan.logger import export_log
 
 # LLM 連携（既存の ai.process_llm に合わせた依存）
 try:  # 遅延インポートに近い扱い（環境未設定時でもUIは描画）
-    from langchain_openai import ChatOpenAI  # type: ignore
     from langchain_core.messages import SystemMessage, HumanMessage  # type: ignore
     from pydantic import BaseModel, Field, ConfigDict, create_model  # type: ignore
+    from core.plan.llm_factory import build_chat_llm  # type: ignore
 except Exception:  # pragma: no cover - LLM未設定環境での型/依存の安全確保
-    ChatOpenAI = None  # type: ignore
+    build_chat_llm = None  # type: ignore
     SystemMessage = None  # type: ignore
     HumanMessage = None  # type: ignore
     BaseModel = object  # type: ignore
@@ -340,7 +340,7 @@ class InteractiveInputBlock(UIBlock):
                 return raw
 
             # LLM未設定チェック
-            have_llm = bool(os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY")) and ChatOpenAI is not None
+            have_llm = bool(os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY")) and build_chat_llm is not None
             if not have_llm:
                 st.error("LLMのAPIキーが未設定のため、このUIは実行できません。")
                 raise RuntimeError("LLM key is required for inquire mode")
@@ -396,7 +396,7 @@ class InteractiveInputBlock(UIBlock):
 
                 model_name = os.getenv("KEIRI_AGENT_LLM_MODEL", "gpt-4.1")
                 temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0.2"))
-                llm = ChatOpenAI(model=model_name, temperature=temperature)
+                llm, _model_label = build_chat_llm(temperature=temperature)
                 structured_llm = llm.with_structured_output(LLMResponse)
 
                 # システムプロンプト

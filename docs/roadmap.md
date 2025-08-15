@@ -12,30 +12,34 @@
   - 実行ログ（JSONL）の粒度統一と外部出力（CSV/Parquet）
 
 ### H1: Observability & Evidence（1–3ヶ月）
-- 目標: Evidence-firstを形にする基礎機能を提供。
+- 目標: Evidence-firstを形にする基礎機能を提供（Evidence Vaultの初版を含む）。
 - 主要アウトカム:
   - Run Manifest（plan/環境/依存/ハッシュの束ね）と `runs/<plan>/<ts>/manifest.json`
   - 出力ファイル/テーブルのハッシュとメタ（provenance, schema）
+  - Evidence Vault v1: 暗号化保存・ハッシュ検証・監査証跡（Audit Trail）・索引
   - 証跡ビューア（Streamlitタブ）とエクスポート
 
 ### H2: Governance & Policy-as-Code（2–4ヶ月）
 - 目標: 組織ポリシーを宣言し、Plan/実行に拘束。
 - 主要アウトカム:
-  - `configs/policies/*.yaml` と検証器
-  - 例外承認フロー（UIブロック）と記録
-  - SoD/承認/サンプリング/しきい値の汎用ルール適用
+  - `designs/policies/*.yaml`（組織/部門/規制）と `core/policy/engine.py`（評価・適用）
+  - `policy.validate`, `policy.deploy`, `policy.audit` ブロックの提供
+  - 例外承認フロー（UIブロック）と適用履歴の証跡化（Vault連携）
+  - SoD/承認/サンプリング/しきい値の汎用ルール適用とコンプライアンススコア
 
 ### H3: Assurance Blocks & Reviewer Workspace（3–6ヶ月）
 - 目標: 統制ブロック群と監査レビューワークスペースを提供。
 - 主要アウトカム:
-  - `control.*` ブロック群（approval, sod_check, sampling, reconciliation など）
-  - Reviewer Workspace（差分・証跡ナビ・指摘管理・再実行）
+  - Control Blocks 基本3種: `control.approval`, `control.sod_check`, `control.sampling`（Vault統合証跡）
+  - 拡張ブロック計画（`control.reconciliation`, `control.validation` など）
+  - Reviewer Workspace v1（ダッシュボード/監査レビュー/証跡管理/ポリシー確認/レポート生成）
+  - 管理者パネルの基盤（ユーザー/ポリシー/設定）
 
 ### H4: Attestation & Evidence Vault（5–9ヶ月）
 - 目標: 実行アテステーションと証跡金庫で非否認性と改ざん検知。
 - 主要アウトカム:
-  - 署名/検証（鍵管理はプラガブル）
-  - Evidence Vault（暗号化保存・リーガルホールド・開示履歴）
+  - 署名/検証（Run Manifest署名、Audit TrailエントリHMAC、鍵管理はプラガブル）
+  - Evidence Vault v2（リーガルホールド、長期保存、開示履歴、系譜の強化）
 
 ### H5: Marketplace & Certification（6–12ヶ月）
 - 目標: 検証済みブロック/Planの共有と認証制度。
@@ -62,22 +66,24 @@
   - `runs/<plan>/<ts>/manifest.json` に planハッシュ、specハッシュ、環境、モデルID、温度、依存ライブラリハッシュ、入力概要を格納（AC: 再現に必要な最小情報が揃う）
 - 出力ハッシングとスキーマ
   - Excel/CSV/JSON出力のハッシュとスキーマスナップショット（AC: 再出力でハッシュ一致）
+- Evidence Vault v1
+  - 暗号化保存、改ざん検知、監査証跡JSONL、Vault索引（AC: 保存/取得/整合性検証のテストが緑）
 - 証跡ビューア
   - StreamlitタブでRun一覧→ノード→入出力→参照解決のツリー閲覧（AC: 2クリック以内に任意ノードの証跡に到達）
 
 ### 3. Policy-as-Code（H2）
-- `configs/policies/*.yaml` 読込と適用
-  - 例: サンプリング率、承認必須閾値、利用禁止ブロック、並列度上限（AC: 禁止ポリシー違反のPlanは検証NG）
+- `designs/policies/*.yaml` 読込と適用（組織/部門/規制、例外定義、適用範囲）
+  - `core/policy/engine.py` とブロック `policy.validate`, `policy.deploy`, `policy.audit`（AC: 違反検知・停止・ログ化を網羅）
 - 例外承認フロー
-  - `ui.interactive_input` に例外申請と承認UI（AC: 承認なしに例外適用不可、証跡化）
+  - `ui.interactive_input` に例外申請と承認UI（AC: 承認なしに例外適用不可、Vaultで証跡化）
 
 ### 4. Control Blocks（H3）
 - 新規ブロック（spec+実装）
   - `control.approval`: 多段承認、期限、代行、記録
   - `control.sod_check`: 職務分掌チェック（操作者/承認者）
-  - `control.sampling`: 統計/属性サンプリング
-  - `control.reconciliation`: 突合（マッピング/差分/閾値/例外キュー）
-  - AC: 代表的な統制シナリオのE2Eテスト
+  - `control.sampling`: 統計/属性/リスクベースサンプリング
+  - `control.reconciliation`（計画）: 突合（マッピング/差分/閾値/例外キュー）
+  - AC: 統制シナリオのE2E＋Vault証跡の整合性検証
 
 ### 5. Attestation & Vault（H4）
 - 署名/検証
@@ -87,9 +93,9 @@
 
 ### 6. Reviewer Workspace（H3–H4）
 - 機能
-  - 差分比較（Plan/Run/出力/設定）
-  - 証跡ナビ（参照追跡・来歴）
-  - 再実行（同一Seed/環境）と部分再実行（特定ノード）
+  - ダッシュボード/監査レビュー/証跡管理/ポリシー確認/レポート生成（UIタブ構成）
+  - 証跡ナビ（参照追跡・来歴）と差分比較、再実行（同一Seed/環境）
+  - 管理者パネル（ユーザー管理・ポリシー管理・システム設定）の基盤
   - AC: 監査観点のユーザーテストで主要ユースケースが完了
 
 ### 7. Marketplace & Certification（H5）

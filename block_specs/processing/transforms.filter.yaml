@@ -7,7 +7,7 @@ inputs:
     description: "list[object]"
   conditions:
     type: array
-    description: "[{ field, operator, value, value2? }]"
+    description: '[{ field, operator, value, value2? }]'
   options:
     type: object
     description: "{ case_insensitive?: bool }"

@@ -41,21 +41,30 @@
 - 実行アテステーション（Attestation）
   - Plan・ブロック仕様・実行ログ・出力を束ねたマニフェストを生成し、ハッシュと署名で封緘。
   - 監査用に第三者検証可能な最小情報セット（計算再現用シード・モデル識別子・温度・依存ライブラリハッシュ等）を保持。
+  - 実行エントリのHMAC署名とマニフェスト整合性検証を標準化。
 
 - Evidence Vault（証跡金庫）
-  - 証跡ファイルの暗号化保存、鍵管理、保存期間とリーガルホールド。
-  - 監査レビューのための一時開示リンク、開封記録、改ざん検知を提供。
+  - 証跡の暗号化保存（AES-256/Fernet）、ハッシュ検証、改ざん検知、保存期間とリーガルホールド。
+  - 監査証跡（Audit Trail）とデータ系譜（Lineage）の生成・閲覧・検索APIを提供。
+  - Vault索引・タグ・関連証跡リンクにより、証跡ナビゲーションと再現性を強化。
+
+- Policy-as-Code（組織ポリシーの宣言と拘束）
+  - `designs/policies/*.yaml` による階層ポリシー（組織/部門/規制）定義、例外承認、適用範囲の宣言。
+  - `policy.validate`, `policy.deploy`, `policy.audit` ブロックでPlan/DAGに拘束的に適用、違反は構造化で証跡化。
+  - UI/Runにおける適用履歴とコンプライアンススコアを可視化。
 
 - Control Blocks（統制ブロック）
-  - `control.approval`, `control.sod_check`, `control.sampling`, `control.reconciliation` 等の汎用統制ブロック群。
-  - Planに統制設計を組み込むことで、設計–実行–証跡が一体で管理可能。
+  - 基本: `control.approval`（多段承認）、`control.sod_check`（職務分掌）、`control.sampling`（サンプリング）。
+  - 拡張: `control.reconciliation`, `control.validation`, `control.audit_trail` など。
+  - Planに統制設計を組み込み、設計–実行–証跡を一体管理。
 
 - Continuous Control Monitoring（CCM）
   - 定期/随時のPlanスケジューリング、逸脱検知、アラート、ドリフト検出。
   - 閾値やルール変更の影響評価（過去Runへの再適用シミュレーション）。
 
 - Reviewer Workspace（レビューワークスペース）
-  - 実務者用UIとは別に、監査/内部監査向けの差分ビュー・証跡ナビゲーション・サンプリング抽出・指摘管理を提供。
+  - 監査/内部監査向けのワークスペース（ダッシュボード、監査レビュー、証跡管理、ポリシー確認、レポート生成の5タブ）。
+  - Evidence Vault/Policy-as-Codeと統合し、差分・証跡ナビ・指摘管理・再実行を2クリック以内に到達可能に。
 
 ## 他LLMツールとの明確な差
 

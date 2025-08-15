@@ -1,0 +1,20 @@
+id: transforms.compute_features
+version: 0.1.0
+entrypoint: blocks/processing/transforms/compute_features.py:ComputeFeaturesBlock
+inputs:
+  items:
+    type: array
+  config:
+    type: object
+    description: |
+      特徴量生成の定義。例: { text: [{ field: "memo", ops: ["normalize","ngram"] }], numeric: [{ field: "amount", ops: ["log"] }] }
+outputs:
+  features:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  文字列/数値の特徴量を生成する汎用ブロック。類似検知や分類の前段として利用。
+
+

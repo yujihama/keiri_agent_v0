@@ -1,0 +1,22 @@
+id: transforms.group_by_agg
+version: 0.1.0
+entrypoint: blocks/processing/transforms/group_by_agg.py:GroupByAggBlock
+inputs:
+  items:
+    type: array
+  by:
+    type: array
+    description: グルーピングキー（["vendor_id","month"] など）
+  aggregations:
+    type: array
+    description: '集計定義（[{ field, op: "sum"|"count"|"avg"|"min"|"max" }]）'
+outputs:
+  rows:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  配列のグルーピングと集計を行う汎用ブロック。Plan側でキーと集計定義を宣言。
+
+

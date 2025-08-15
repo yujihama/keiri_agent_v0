@@ -1,0 +1,147 @@
+apiVersion: v1
+id: po_policy_compliance_demo
+version: 1.0.0
+description: "POポリシー遵守チェック（デモ）"
+policy:
+  on_error: continue
+  retries: 0
+ui:
+  layout: [collect_po]
+graph:
+  - id: collect_po
+    description: POデータのアップロード
+    block: ui.interactive_input
+    in:
+      mode: collect
+      requirements:
+        - { id: po_csv, type: file, label: "POデータ (CSV)", required: true }
+    out:
+      collected_data: collected
+
+  - id: read_po
+    description: PO CSVを読み込み
+    block: file.read_csv
+    in:
+      bytes: ${collect_po.collected.po_csv}
+      encoding: utf-8
+      delimiter: ","
+      has_header: true
+    out:
+      rows: po_rows
+
+  - id: enforce_policy
+    description: ポリシー適用（閾値/必須/正規表現/一意性 + 例外許可）
+    block: control.policy_enforce
+    in:
+      items: ${read_po.po_rows}
+      policy:
+        rules:
+          - { id: amount_threshold, type: threshold, field: amount, op: lte, value: 100000 }
+          - { id: required_fields, type: required, fields: [vendor_id, po_no, amount] }
+          - { id: currency_jpy, type: regex, field: currency, pattern: "^JPY$" }
+          - { id: po_unique, type: unique, field: po_no }
+        exceptions:
+          allow_list:
+            - "vendor_id:V003"
+    out:
+      violations: violations
+      passed: passed
+      summary: summary
+
+  - id: approval
+    description: "多段承認（デモ: CFO承認1段）"
+    block: control.approval
+    in:
+      route_definition:
+        levels:
+          - { id: L1, approvers: ["cfo"], rule: { type: any } }
+      decisions:
+        - { level_id: L1, approver_id: "cfo", decision: "approve", timestamp: "2025-08-14T00:00:00Z" }
+      context:
+        subject: "PO Policy Check"
+        total_items: ${enforce_policy.summary.items}
+        violations: ${enforce_policy.summary.violations}
+    out:
+      approved: approved
+      route_log: route_log
+
+  - id: write_report
+    description: 違反一覧をExcel出力
+    block: excel.write
+    in:
+      workbook:
+        name: "po_policy_report.xlsx"
+      column_updates:
+        - sheet: "Violations"
+          header_row: 1
+          start_row: 2
+          write_header: true
+          clear_existing: true
+          columns:
+            - { header: "rule_id", path: "rule_id" }
+            - { header: "item_ref", path: "item_ref" }
+            - { header: "field", path: "details.field" }
+            - { header: "op", path: "details.op" }
+            - { header: "value", path: "details.value" }
+            - { header: "missing", path: "details.missing" }
+            - { header: "duplicate", path: "details.duplicate" }
+          values: ${enforce_policy.violations}
+    out:
+      workbook_updated: report_wb
+
+  # Optional: LLM で違反の要約・論点抽出（APIキーがある場合のみ）
+  - id: llm_violations_summary
+    description: "LLMで違反の要約・優先度付けを構造化"
+    block: ai.process_llm
+    when:
+      expr: "${env.OPENAI_API_KEY} != None or ${env.AZURE_OPENAI_API_KEY} != None"
+    in:
+      evidence_data:
+        violations: ${enforce_policy.violations}
+        rows: ${read_po.po_rows}
+      prompt: |
+        入力はポリシー違反とPO明細です。監査視点で重要な論点を簡潔に整理し、
+        違反リストのうち優先的にレビューすべき項目を抽出してください。
+        厳密なJSONのみを返却してください。
+      output_schema:
+        summary:
+          type: object
+          properties:
+            total_items: { type: integer }
+            violations: { type: integer }
+            key_points: { type: string }
+        violations_brief:
+          type: array
+          items:
+            type: object
+            properties:
+              vendor_id: { type: string }
+              po_no: { type: string }
+              rule_id: { type: string }
+              explanation: { type: string }
+    out:
+      results: llm_summary
+
+  - id: write_llm_summary
+    description: LLM要約をExcel追記
+    block: excel.write
+    when:
+      expr: "${env.OPENAI_API_KEY} != None or ${env.AZURE_OPENAI_API_KEY} != None"
+    in:
+      workbook: ${write_report.report_wb}
+      column_updates:
+        - sheet: "LLM_Summary"
+          header_row: 1
+          start_row: 2
+          write_header: true
+          clear_existing: true
+          columns:
+            - { header: "vendor_id", path: "vendor_id" }
+            - { header: "po_no", path: "po_no" }
+            - { header: "rule_id", path: "rule_id" }
+            - { header: "explanation", path: "explanation" }
+          values: ${llm_violations_summary.llm_summary.violations_brief}
+    out:
+      workbook_updated: report_wb_llm
+
+

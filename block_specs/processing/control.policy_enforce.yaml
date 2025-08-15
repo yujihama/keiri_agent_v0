@@ -1,0 +1,32 @@
+id: control.policy_enforce
+version: 0.1.0
+entrypoint: blocks/processing/control/policy_enforce.py:PolicyEnforceBlock
+inputs:
+  items:
+    type: array
+    description: 対象データ（list[object]）
+  policy:
+    type: object
+    description: |
+      YAML/JSON で宣言されたポリシー。例:
+        { rules: [
+            { id: "po_threshold", type: "threshold", field: "amount", op: "lte", value: 100000 },
+            { id: "required_fields", type: "required", fields: ["vendor_id","po_no"] },
+            { id: "forbidden", type: "forbidden", condition: { field: "vendor", operator: "in", value: ["blacklistA"] } }
+          ], exceptions?: { allow_list?: ["vendor_id:123"] } }
+  options:
+    type: object
+    description: 検証モード（strict/lenient）、メッセージ言語など
+outputs:
+  violations:
+    type: array
+    description: ルール違反の明細（rule_id, item_ref, details）
+  passed:
+    type: boolean
+  summary:
+    type: object
+requirements: []
+description: |
+  Policy-as-Code を適用するための汎用ブロック。閾値/必須/禁止/条件式などの基本ルールを内包し、例外（allowlist）を宣言的に許容。
+
+

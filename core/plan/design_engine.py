@@ -286,8 +286,8 @@ def _generate_plan_llm(
     options: Optional[DesignEngineOptions] = None,
 ) -> GeneratedPlan:
     try:
-        from langchain_openai import ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
+        from core.plan.llm_factory import build_chat_llm
     except Exception as e:  # pragma: no cover
         raise RuntimeError("LangChain/OpenAI libraries not available") from e
 
@@ -384,7 +384,7 @@ def _generate_plan_llm(
 
     model_name = os.getenv("KEIRI_AGENT_LLM_MODEL") or "gpt-4.1"
     temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0"))
-    llm = ChatOpenAI(model=model_name, temperature=temperature)
+    llm, model_label = build_chat_llm(temperature=temperature)
     # Prefer structured output to enforce strict JSON
     design: LLMDesignModel | None = None
     try:
@@ -432,7 +432,7 @@ def _generate_plan_llm(
         # 設計思想に基づき、フォールバックせずにエラーを報告
         error_msg = "Plan validation failed:\n" + "\n".join(f"- {e}" for e in errors)
         raise ValueError(error_msg)
-    reasoning = "LLM生成 (LangChain + OpenAI)"
+    reasoning = "LLM生成 (LangChain + OpenAI/Azure)"
     return GeneratedPlan(plan=plan, reasoning=reasoning)
 
 

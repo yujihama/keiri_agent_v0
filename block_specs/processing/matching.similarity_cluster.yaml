@@ -1,0 +1,31 @@
+id: matching.similarity_cluster
+version: 0.1.0
+entrypoint: blocks/processing/matching/similarity_cluster.py:SimilarityClusterBlock
+inputs:
+  items:
+    type: array
+    description: クラスタ対象（list[object]）
+  feature_spec:
+    type: object
+    description: 特徴量の抽出定義（text_fields, numeric_fields, normalization等）
+  method:
+    type: string
+    enum: ["cosine", "minhash", "lsh", "jaccard"]
+  threshold:
+    type: number
+    description: 類似度のしきい値（0..1）
+  top_k:
+    type: integer
+    description: 類似候補の上限
+outputs:
+  clusters:
+    type: array
+  candidates:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  近似重複検知や候補抽出に用いる類似度クラスタリングの汎用ブロック。特徴量定義をPlan側に寄せ、再利用性を高める。
+
+

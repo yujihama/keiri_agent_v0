@@ -1,0 +1,1 @@
+{"approved": true, "route_log": {"levels": [{"id": "L1", "rule": {"type": "any"}, "approvers": ["cfo"], "decisions": [{"approver_id": "cfo", "decision": "approve", "comment": null, "timestamp": "2025-08-14T00:00:00Z"}], "status": "satisfied", "detail": {"approves": 1}}]}, "violations": []}

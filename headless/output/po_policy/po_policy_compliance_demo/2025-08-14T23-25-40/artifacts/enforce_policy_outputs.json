@@ -1,0 +1,1 @@
+{"violations": [{"rule_id": "amount_threshold", "item_ref": 1, "details": {"field": "amount", "left": "120000", "op": "lte", "value": 100000}}, {"rule_id": "po_unique", "item_ref": 3, "details": {"field": "po_no", "duplicate": "P-1001"}}], "passed": false, "summary": {"items": 4, "rules": 4, "violations": 2}}

@@ -1,0 +1,1 @@
+{"rows": [{"vendor_id": "V001", "po_no": "P-1001", "amount": "90000", "currency": "JPY"}, {"vendor_id": "V002", "po_no": "P-1002", "amount": "120000", "currency": "JPY"}, {"vendor_id": "V003", "po_no": "P-1003", "amount": "150000", "currency": "USD"}, {"vendor_id": "V001", "po_no": "P-1001", "amount": "90000", "currency": "JPY"}], "summary": {"path": "", "rows": 4}}

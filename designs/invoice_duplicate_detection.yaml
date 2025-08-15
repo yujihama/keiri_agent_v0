@@ -1,0 +1,148 @@
+apiVersion: v1
+id: invoice_duplicate_detection_demo
+version: 1.0.0
+description: "重複請求検知（デモ）"
+policy:
+  on_error: continue
+  retries: 0
+ui:
+  layout: [collect_invoices]
+graph:
+  - id: collect_invoices
+    description: 請求書データのアップロード
+    block: ui.interactive_input
+    in:
+      mode: collect
+      requirements:
+        - { id: invoices_csv, type: file, label: "請求書データ (CSV)", required: true }
+    out:
+      collected_data: collected
+
+  - id: read_invoices
+    description: 請求書CSVを読み込み
+    block: file.read_csv
+    in:
+      bytes: ${collect_invoices.collected.invoices_csv}
+      encoding: utf-8
+      delimiter: ","
+      has_header: true
+    out:
+      rows: invoices
+
+  - id: exact_dupes
+    description: 厳密一致の重複（ベンダ＋請求書番号）
+    block: matching.record_linkage
+    in:
+      left: ${read_invoices.invoices}
+      right: ${read_invoices.invoices}
+      strategy: exact
+      keys:
+        - { left: vendor_id, right: vendor_id, type: string }
+        - { left: invoice_no, right: invoice_no, type: string }
+    out:
+      matches: exact_matches
+
+  - id: near_dupes
+    description: テキスト類似に基づく近似重複候補
+    block: matching.similarity_cluster
+    in:
+      items: ${read_invoices.invoices}
+      feature_spec:
+        text_fields: ["vendor_name", "description", "invoice_no"]
+      method: minhash
+      threshold: 0.55
+      top_k: 10
+    out:
+      clusters: clusters
+      candidates: candidates
+
+  - id: write_report
+    description: レポート出力
+    block: excel.write
+    in:
+      workbook:
+        name: "invoice_duplicates_report.xlsx"
+      column_updates:
+        - sheet: "ExactDuplicates"
+          header_row: 1
+          start_row: 2
+          write_header: true
+          clear_existing: true
+          columns:
+            - { header: "score", path: "score" }
+            - { header: "left.vendor_id", path: "left.vendor_id" }
+            - { header: "left.invoice_no", path: "left.invoice_no" }
+            - { header: "left.amount", path: "left.amount" }
+            - { header: "right.vendor_id", path: "right.vendor_id" }
+            - { header: "right.invoice_no", path: "right.invoice_no" }
+            - { header: "right.amount", path: "right.amount" }
+          values: ${exact_dupes.exact_matches}
+        - sheet: "NearCandidates"
+          header_row: 1
+          start_row: 2
+          write_header: true
+          clear_existing: true
+          columns:
+            - { header: "a_index", path: "a" }
+            - { header: "b_index", path: "b" }
+            - { header: "score", path: "score" }
+          values: ${near_dupes.candidates}
+    out:
+      workbook_updated: report_wb
+
+  # Optional: LLM による要約（APIキーがある場合のみ実行）
+  - id: llm_summarize
+    description: "LLMで重複候補の要約・選定を構造化出力"
+    block: ai.process_llm
+    when:
+      expr: "${env.OPENAI_API_KEY} != None or ${env.AZURE_OPENAI_API_KEY} != None"
+    in:
+      evidence_data:
+        exact_matches: ${exact_dupes.exact_matches}
+        candidates: ${near_dupes.candidates}
+      prompt: |
+        次のデータは請求書の重複検知結果（厳密一致と近似候補）です。監査担当者向けに、
+        重要なペアを抽出し、根拠（スコア/説明）付きで構造化して返してください。
+        正確なJSONのみにしてください。
+      output_schema:
+        summary:
+          type: object
+          properties:
+            total_exact: { type: integer }
+            total_candidates: { type: integer }
+            notes: { type: string }
+        pairs:
+          type: array
+          items:
+            type: object
+            properties:
+              left_invoice: { type: string }
+              right_invoice: { type: string }
+              score: { type: number }
+              justification: { type: string }
+    out:
+      results: llm_summary
+
+  - id: write_llm_summary
+    description: LLM要約をExcel追記
+    block: excel.write
+    when:
+      expr: "${env.OPENAI_API_KEY} != None or ${env.AZURE_OPENAI_API_KEY} != None"
+    in:
+      workbook: ${write_report.report_wb}
+      column_updates:
+        - sheet: "LLM_Summary"
+          header_row: 1
+          start_row: 2
+          write_header: true
+          clear_existing: true
+          columns:
+            - { header: "left_invoice", path: "left_invoice" }
+            - { header: "right_invoice", path: "right_invoice" }
+            - { header: "score", path: "score" }
+            - { header: "justification", path: "justification" }
+          values: ${llm_summarize.llm_summary.pairs}
+    out:
+      workbook_updated: report_wb_llm
+
+

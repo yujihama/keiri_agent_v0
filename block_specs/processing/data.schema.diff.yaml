@@ -1,0 +1,24 @@
+id: data.schema.diff
+version: 0.1.0
+entrypoint: blocks/processing/data_quality/schema_diff.py:SchemaDiffBlock
+inputs:
+  schema_old:
+    type: object
+  schema_new:
+    type: object
+  options:
+    type: object
+    description: 互換性ポリシー（breaking/non-breaking の判定基準など）
+outputs:
+  diffs:
+    type: array
+    description: 変更点一覧（追加/削除/型変更/制約変更など）
+  breaking_changes:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  スキーマ差分を抽出し、互換性に影響する変更を特定するブロック。
+
+
