@@ -24,6 +24,8 @@ from core.plan.loader import load_plan
 from core.plan.validator import validate_plan, dry_run_plan
 from core.plan.design_engine import generate_plan, DesignEngineOptions
 from core.plan.runner import PlanRunner
+from core.ui.auth import auth_manager, login_form, sidebar_user_info, require_auth, Permission
+from core.evidence.vault import EvidenceVault
 
 
 def list_designs() -> List[Path]:
@@ -936,7 +938,349 @@ def main():
                         st.download_button("JSONL ダウンロード", data="\n".join(lines), file_name=file.name, mime="application/jsonl")
 
 
+def main_with_auth():
+    """認証機能付きメイン関数"""
+    # 認証チェック
+    session = auth_manager.get_current_session()
+    if not session:
+        login_form()
+        return
+    
+    # サイドバーにユーザー情報表示
+    sidebar_user_info()
+    
+    # 権限ベースのタブ表示
+    tabs = []
+    tab_names = []
+    
+    # 基本機能（全ユーザー）
+    tabs.append("実行")
+    tab_names.append("plan_execute")
+    
+    if auth_manager.check_permission(Permission.PLAN_MODIFY):
+        tabs.append("設計")
+        tab_names.append("plan_design")
+    
+    if auth_manager.check_permission(Permission.EVIDENCE_READ):
+        tabs.append("証跡管理")
+        tab_names.append("evidence_vault")
+    
+    if auth_manager.check_permission(Permission.AUDIT_REVIEW):
+        tabs.append("監査レビュー")
+        tab_names.append("audit_review")
+    
+    if auth_manager.check_permission(Permission.SYSTEM_CONFIG):
+        tabs.append("システム設定")
+        tab_names.append("system_config")
+    
+    tabs.append("ログ閲覧")
+    tab_names.append("logs")
+    
+    # タブの作成
+    tab_objects = st.tabs(tabs)
+    
+    for i, (tab_obj, tab_name) in enumerate(zip(tab_objects, tab_names)):
+        with tab_obj:
+            if tab_name == "plan_execute":
+                execution_tab()
+            elif tab_name == "plan_design":
+                design_tab()
+            elif tab_name == "evidence_vault":
+                evidence_vault_tab()
+            elif tab_name == "audit_review":
+                audit_review_tab()
+            elif tab_name == "system_config":
+                system_config_tab()
+            elif tab_name == "logs":
+                logs_tab()
+
+
+def execution_tab():
+    """実行タブ"""
+    st.header("プラン実行")
+    
+    designs = list_designs()
+    if not designs:
+        st.info("designs/ フォルダにYAMLファイルがありません")
+        return
+    
+    design_names = [p.stem for p in designs]
+    selected_name = st.selectbox("実行するプラン", design_names)
+    
+    if not selected_name:
+        return
+    
+    selected_file = next(p for p in designs if p.stem == selected_name)
+    
+    try:
+        plan = load_plan(selected_file)
+        
+        # プラン実行権限チェック
+        auth_manager.require_permission(Permission.PLAN_EXECUTE)
+        
+        # 実行ボタン
+        if st.button(f"実行: {plan.id}", type="primary"):
+            with st.spinner("実行中..."):
+                runner = PlanRunner()
+                
+                # Evidence Vault初期化
+                evidence_vault = EvidenceVault("evidence_vault")
+                
+                result = runner.run(plan, evidence_vault=evidence_vault)
+                
+                if result.success:
+                    st.success("✅ 実行完了")
+                    if result.outputs:
+                        st.subheader("実行結果")
+                        st.json(result.outputs)
+                else:
+                    st.error(f"❌ 実行失敗: {result.error}")
+                    
+        # プラン詳細表示
+        st.subheader("プラン詳細")
+        with st.expander("プラン内容を表示"):
+            st.json(plan.dict())
+            
+    except Exception as e:
+        st.error(f"プランの読み込みに失敗しました: {str(e)}")
+
+
+def design_tab():
+    """設計タブ"""
+    st.header("プラン設計")
+    auth_manager.require_permission(Permission.PLAN_MODIFY)
+    
+    # 既存のプラン設計機能をここに移動
+    # （元のmain関数から設計関連部分を抽出）
+    st.info("プラン設計機能は今後実装予定です。")
+
+
+def evidence_vault_tab():
+    """証跡管理タブ"""
+    st.header("証跡管理")
+    auth_manager.require_permission(Permission.EVIDENCE_READ)
+    
+    # Evidence Vault機能
+    try:
+        evidence_vault = EvidenceVault("evidence_vault")
+        
+        # 証跡一覧表示
+        st.subheader("証跡一覧")
+        
+        # フィルタ
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            evidence_type = st.selectbox("証跡タイプ", ["すべて", "input", "output", "control_result", "audit_finding"])
+        with col2:
+            department = st.text_input("部署名")
+        with col3:
+            date_from = st.date_input("開始日")
+        
+        # 証跡検索
+        if st.button("検索"):
+            filters = {}
+            if evidence_type != "すべて":
+                filters['evidence_type'] = evidence_type
+            if department:
+                filters['department'] = department
+            if date_from:
+                filters['date_from'] = datetime.combine(date_from, datetime.min.time())
+            
+            try:
+                evidences = evidence_vault.search_evidence(filters)
+                
+                if evidences:
+                    st.write(f"検索結果: {len(evidences)}件")
+                    for evidence in evidences[:20]:  # 最大20件表示
+                        with st.expander(f"{evidence.evidence_id} - {evidence.evidence_type}"):
+                            st.json(evidence.dict())
+                            
+                            # 証跡データ表示（権限があれば）
+                            if auth_manager.check_permission(Permission.EVIDENCE_READ):
+                                if st.button(f"データ表示", key=f"show_{evidence.evidence_id}"):
+                                    try:
+                                        data = evidence_vault.retrieve_evidence(evidence.evidence_id)
+                                        st.json(data)
+                                    except Exception as e:
+                                        st.error(f"データ取得エラー: {str(e)}")
+                else:
+                    st.info("該当する証跡が見つかりませんでした。")
+                    
+            except Exception as e:
+                st.error(f"検索エラー: {str(e)}")
+        
+        # 統計情報
+        st.subheader("証跡統計")
+        try:
+            stats = evidence_vault.get_statistics()
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("総証跡数", stats.total_evidence_count)
+            with col2:
+                st.metric("総データサイズ", f"{stats.total_data_size_mb:.2f} MB")
+            with col3:
+                st.metric("今日の証跡", stats.today_evidence_count)
+            with col4:
+                st.metric("アクティブ期間", f"{stats.retention_days_remaining}日")
+        except Exception as e:
+            st.error(f"統計取得エラー: {str(e)}")
+            
+    except Exception as e:
+        st.error(f"Evidence Vault初期化エラー: {str(e)}")
+
+
+def audit_review_tab():
+    """監査レビュータブ"""
+    st.header("監査レビュー")
+    auth_manager.require_permission(Permission.AUDIT_REVIEW)
+    
+    # Reviewer Workspaceの実装
+    try:
+        from core.reviewer.dashboard import ReviewerDashboard
+        from core.evidence.vault import EvidenceVault
+        from core.policy.engine import PolicyEngine
+        
+        # 必要なサービスの初期化
+        evidence_vault = EvidenceVault("evidence_vault")
+        policy_engine = PolicyEngine(evidence_vault=evidence_vault)
+        
+        # サンプルポリシーがない場合は作成
+        if not policy_engine.get_active_policies():
+            policy_engine.create_sample_policies()
+        
+        # ダッシュボードの表示
+        dashboard = ReviewerDashboard(evidence_vault, policy_engine)
+        dashboard.render()
+        
+    except Exception as e:
+        st.error(f"監査レビュー機能の初期化に失敗しました: {str(e)}")
+        st.info("Evidence VaultとPolicy Engineが正しく設定されていることを確認してください。")
+
+
+def system_config_tab():
+    """システム設定タブ"""
+    st.header("システム設定")
+    auth_manager.require_permission(Permission.SYSTEM_CONFIG)
+    
+    st.subheader("ユーザー管理")
+    
+    # ユーザー一覧表示
+    users = list(auth_manager.users.values())
+    
+    for user in users:
+        with st.expander(f"{user.display_name} ({user.username})"):
+            st.write(f"**ユーザーID:** {user.user_id}")
+            st.write(f"**メール:** {user.email}")
+            st.write(f"**ロール:** {', '.join([r.value for r in user.roles])}")
+            st.write(f"**部署:** {user.department or 'なし'}")
+            st.write(f"**作成日:** {user.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+            st.write(f"**最終ログイン:** {user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else 'なし'}")
+            st.write(f"**ステータス:** {'アクティブ' if user.is_active else '無効'}")
+
+
+def logs_tab():
+    """ログ閲覧タブ"""
+    st.header("ログ閲覧")
+    
+    # 既存のログ閲覧機能
+    runs_dir = Path("runs")
+    if not runs_dir.exists():
+        st.info("runs/ フォルダがありません")
+        return
+        
+    plans = sorted({p.parent.name for p in runs_dir.rglob("*.jsonl")})
+    if not plans:
+        st.info("まだログがありません")
+    else:
+        selected = st.selectbox("Plan", plans)
+        if selected is None:
+            st.stop()
+        files = sorted((runs_dir / selected).glob("*.jsonl"), reverse=True)
+        if not files:
+            st.info("選択したPlanのログがありません")
+        else:
+            file = st.selectbox("Run", files)
+            if file:
+                try:
+                    text = file.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    text = ""
+                lines = text.splitlines()
+                events = []
+                for l in lines:
+                    s = str(l).strip()
+                    if not s:
+                        continue
+                    try:
+                        events.append(json.loads(s))
+                    except Exception:
+                        continue
+
+                # 簡易フィルタ
+                types = sorted({e.get("type") for e in events})
+                sel_types = st.multiselect("イベント種類", options=types, default=types)
+                # 親子run_idでスレッドを追跡
+                parent = st.text_input("parent_run_id フィルタ", value="")
+                filtered = [e for e in events if e.get("type") in sel_types]
+                if parent:
+                    filtered = [e for e in filtered if e.get("parent_run_id") == parent or e.get("run_id") == parent]
+                st.write(f"{len(filtered)} events")
+                # サマリ（成功/失敗/スキップ）
+                ok = sum(1 for e in filtered if e.get("type") == "node_finish")
+                err = sum(1 for e in filtered if e.get("type") == "error")
+                skipped = sum(1 for e in filtered if e.get("type") == "node_skip")
+                st.write({"node_finish": ok, "error": err, "node_skip": skipped})
+                # フロー図（線形・色分け）
+                try:
+                    from core.plan.loader import load_plan as _load_plan_for_viz
+                    from core.plan.dag_viz import compute_node_states, generate_flow_html
+                    from core.plan.models import Plan as _PlanModel
+
+                    # 1) designs/<id>.yaml を優先的に読む
+                    _plan_viz = None
+                    plan_file = Path("designs") / f"{selected}.yaml"
+                    if plan_file.exists():
+                        _plan_viz = _load_plan_for_viz(plan_file)
+                    else:
+                        # 2) designs 配下を走査し、id が一致する YAML を探す（タイムスタンプ付きファイル等に対応）
+                        try:
+                            for cand in Path("designs").rglob("*.yaml"):
+                                try:
+                                    _p = _load_plan_for_viz(cand)
+                                    if _p and getattr(_p, "id", None) == selected:
+                                        _plan_viz = _p
+                                        break
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+
+                    # 3) それでも見つからない場合、ログ内の start イベントから plan_spec を復元
+                    if _plan_viz is None:
+                        start_ev = next((e for e in events if e.get("type") == "start" and e.get("plan") == selected), None)
+                        if start_ev and isinstance(start_ev.get("plan_spec"), dict):
+                            try:
+                                _plan_viz = _PlanModel.model_validate(start_ev["plan_spec"])  # type: ignore[arg-type]
+                            except Exception:
+                                _plan_viz = None
+
+                    if _plan_viz is not None:
+                        states = compute_node_states(_plan_viz, filtered)
+                        html = generate_flow_html(_plan_viz, states, include_loop_nodes=False)
+                        st.markdown(html, unsafe_allow_html=True)
+                    else:
+                        st.info("フロー図表示用のPlan定義を見つけられませんでした（designsまたはログ内のplan_specを参照できませんでした）。")
+                except Exception as _viz_err:
+                    st.warning(f"DAG可視化でエラー: {_viz_err}")
+                st.json(filtered)
+                if not filtered and lines:
+                    st.info("イベントの解析に失敗したため、Rawログを表示します。")
+                    st.text_area("Raw JSONL", value="\n".join(lines), height=200)
+                st.download_button("JSONL ダウンロード", data="\n".join(lines), file_name=file.name, mime="application/jsonl")
+
+
 if __name__ == "__main__":
-    main()
+    # main()  # 旧版
+    main_with_auth()  # 認証機能付き版
 
 

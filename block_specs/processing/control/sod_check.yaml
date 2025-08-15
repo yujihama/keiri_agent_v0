@@ -1,0 +1,177 @@
+id: control.sod_check
+version: 1.0.0
+entrypoint: blocks/processing/control/sod_check.py:SodCheckBlock
+description: 職務分掌の検証と利益相反の検知
+
+inputs:
+  transaction_data:
+    type: object
+    description: 取引データ
+    properties:
+      transaction_id:
+        type: string
+        description: 取引ID
+      transaction_type:
+        type: string
+        description: 取引種別
+      amount:
+        type: number
+        description: 取引金額
+      initiator:
+        type: string
+        description: 取引開始者
+      approver:
+        type: string
+        description: 承認者
+      processor:
+        type: string
+        description: 処理者
+      reviewer:
+        type: string
+        description: レビューワー
+      timestamp:
+        type: string
+        format: date-time
+        description: 取引日時
+    required: [transaction_id, transaction_type, initiator]
+
+  sod_matrix:
+    type: object
+    description: 職務分掌マトリックス
+    properties:
+      roles:
+        type: array
+        description: ロール定義
+        items:
+          type: object
+          properties:
+            role_id:
+              type: string
+              description: ロールID
+            role_name:
+              type: string
+              description: ロール名
+            permissions:
+              type: array
+              description: 権限リスト
+              items:
+                type: string
+      incompatible_roles:
+        type: array
+        description: 非互換ロール組み合わせ
+        items:
+          type: object
+          properties:
+            role1:
+              type: string
+              description: ロール1
+            role2:
+              type: string
+              description: ロール2
+            reason:
+              type: string
+              description: 非互換理由
+      user_roles:
+        type: object
+        description: ユーザーロール割り当て
+        additionalProperties:
+          type: array
+          items:
+            type: string
+
+  conflict_rules:
+    type: array
+    description: 利益相反ルール
+    items:
+      type: object
+      properties:
+        rule_id:
+          type: string
+          description: ルールID
+        rule_name:
+          type: string
+          description: ルール名
+        condition:
+          type: string
+          description: 条件式
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+          description: 重要度
+        description:
+          type: string
+          description: ルール説明
+
+output_schema:
+  type: object
+  properties:
+    sod_status:
+      type: string
+      enum: [compliant, violation, warning]
+      description: 職務分掌状況
+    violations:
+      type: array
+      description: 違反事項
+      items:
+        type: object
+        properties:
+          violation_type:
+            type: string
+            enum: [role_conflict, permission_overlap, same_person_multiple_roles]
+            description: 違反タイプ
+          severity:
+            type: string
+            enum: [low, medium, high, critical]
+            description: 重要度
+          description:
+            type: string
+            description: 違反内容
+          involved_users:
+            type: array
+            description: 関与ユーザー
+            items:
+              type: string
+          involved_roles:
+            type: array
+            description: 関与ロール
+            items:
+              type: string
+          recommendation:
+            type: string
+            description: 推奨対応
+    role_analysis:
+      type: object
+      description: ロール分析結果
+      properties:
+        initiator_roles:
+          type: array
+          description: 開始者ロール
+          items:
+            type: string
+        approver_roles:
+          type: array
+          description: 承認者ロール
+          items:
+            type: string
+        processor_roles:
+          type: array
+          description: 処理者ロール
+          items:
+            type: string
+        reviewer_roles:
+          type: array
+          description: レビューワーロール
+          items:
+            type: string
+    compliance_score:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: コンプライアンススコア
+    evidence_files:
+      type: array
+      description: 生成された証跡ファイル
+      items:
+        type: string
+        description: ファイルパス
+  required: [sod_status, violations, role_analysis, compliance_score, evidence_files]

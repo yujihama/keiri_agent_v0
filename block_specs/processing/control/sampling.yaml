@@ -1,0 +1,173 @@
+id: control.sampling
+version: 1.0.0
+entrypoint: blocks/processing/control/sampling.py:SamplingBlock
+description: 統計的・属性・リスクベースサンプリングの実行
+
+inputs:
+  population_data:
+    type: object
+    description: 母集団データ
+    properties:
+      data_source:
+        type: string
+        description: データソース
+      total_items:
+        type: integer
+        description: 総アイテム数
+      total_value:
+        type: number
+        description: 総金額
+      items:
+        type: array
+        description: 個別アイテム
+        items:
+          type: object
+          properties:
+            item_id:
+              type: string
+              description: アイテムID
+            value:
+              type: number
+              description: 金額
+            risk_score:
+              type: number
+              description: リスクスコア
+            attributes:
+              type: object
+              description: 属性データ
+    required: [data_source, total_items, items]
+
+  sampling_parameters:
+    type: object
+    description: サンプリングパラメータ
+    properties:
+      method:
+        type: string
+        enum: [statistical, attribute, risk_based, systematic, random]
+        description: サンプリング手法
+      confidence_level:
+        type: number
+        minimum: 0.8
+        maximum: 0.99
+        description: 信頼水準
+      tolerable_error_rate:
+        type: number
+        minimum: 0.01
+        maximum: 0.2
+        description: 許容誤謬率
+      expected_error_rate:
+        type: number
+        minimum: 0
+        maximum: 0.5
+        description: 予想誤謬率
+      sample_size:
+        type: integer
+        minimum: 1
+        description: サンプルサイズ（指定時）
+      stratification:
+        type: object
+        description: 層化設定
+        properties:
+          enabled:
+            type: boolean
+            description: 層化有効化
+          strata_field:
+            type: string
+            description: 層化フィールド
+          strata_weights:
+            type: object
+            description: 層別重み
+      risk_criteria:
+        type: object
+        description: リスク基準
+        properties:
+          high_risk_threshold:
+            type: number
+            description: 高リスク閾値
+          medium_risk_threshold:
+            type: number
+            description: 中リスク閾値
+          high_risk_percentage:
+            type: number
+            description: 高リスク選択割合
+    required: [method]
+
+output_schema:
+  type: object
+  properties:
+    sampling_result:
+      type: object
+      description: サンプリング結果
+      properties:
+        method_used:
+          type: string
+          description: 使用手法
+        sample_size:
+          type: integer
+          description: 実際のサンプルサイズ
+        population_size:
+          type: integer
+          description: 母集団サイズ
+        sampling_ratio:
+          type: number
+          description: サンプリング比率
+        confidence_level:
+          type: number
+          description: 信頼水準
+        margin_of_error:
+          type: number
+          description: 誤差範囲
+    selected_items:
+      type: array
+      description: 選択されたアイテム
+      items:
+        type: object
+        properties:
+          item_id:
+            type: string
+            description: アイテムID
+          value:
+            type: number
+            description: 金額
+          risk_score:
+            type: number
+            description: リスクスコア
+          selection_reason:
+            type: string
+            description: 選択理由
+          stratum:
+            type: string
+            description: 層（層化時）
+    sampling_statistics:
+      type: object
+      description: サンプリング統計
+      properties:
+        total_sample_value:
+          type: number
+          description: サンプル総金額
+        average_item_value:
+          type: number
+          description: 平均アイテム金額
+        value_coverage_ratio:
+          type: number
+          description: 金額カバー率
+        risk_distribution:
+          type: object
+          description: リスク分布
+          properties:
+            high_risk_count:
+              type: integer
+              description: 高リスクアイテム数
+            medium_risk_count:
+              type: integer
+              description: 中リスクアイテム数
+            low_risk_count:
+              type: integer
+              description: 低リスクアイテム数
+    evidence_files:
+      type: array
+      description: 生成された証跡ファイル
+      items:
+        type: string
+        description: ファイルパス
+  required: [sampling_result, selected_items, sampling_statistics, evidence_files]
