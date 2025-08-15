@@ -1,0 +1,167 @@
+id: control.approval
+version: 1.0.0
+entrypoint: blocks/processing/control/approval.py:ApprovalBlock
+description: 多段承認フローの実行と承認履歴の管理
+
+inputs:
+  approval_request:
+    type: object
+    description: 承認要求データ
+    properties:
+      request_id:
+        type: string
+        description: 承認要求ID
+      requester:
+        type: string
+        description: 申請者
+      amount:
+        type: number
+        description: 金額（承認レベル判定用）
+      description:
+        type: string
+        description: 承認要求の説明
+      attachments:
+        type: array
+        description: 添付ファイル
+        items:
+          type: string
+    required: [request_id, requester, amount, description]
+
+  approval_policy:
+    type: object
+    description: 承認ポリシー設定
+    properties:
+      levels:
+        type: array
+        description: 承認レベル定義
+        items:
+          type: object
+          properties:
+            level:
+              type: integer
+              description: 承認レベル
+            min_amount:
+              type: number
+              description: 最小金額
+            max_amount:
+              type: number
+              description: 最大金額
+            required_approvers:
+              type: integer
+              description: 必要承認者数
+            approver_roles:
+              type: array
+              description: 承認者ロール
+              items:
+                type: string
+            timeout_hours:
+              type: integer
+              description: 承認期限（時間）
+      escalation_policy:
+        type: object
+        description: エスカレーションポリシー
+        properties:
+          enabled:
+            type: boolean
+            description: エスカレーション有効化
+          escalation_hours:
+            type: integer
+            description: エスカレーション時間
+          escalation_roles:
+            type: array
+            description: エスカレーション先ロール
+            items:
+              type: string
+
+  current_approvals:
+    type: array
+    description: 既存の承認状況
+    items:
+      type: object
+      properties:
+        approver:
+          type: string
+          description: 承認者
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+          description: 承認状況
+        timestamp:
+          type: string
+          format: date-time
+          description: 承認日時
+        comment:
+          type: string
+          description: 承認コメント
+
+output_schema:
+  type: object
+  properties:
+    approval_status:
+      type: string
+      enum: [pending, approved, rejected, escalated]
+      description: 全体承認状況
+    required_approvals:
+      type: array
+      description: 必要な承認
+      items:
+        type: object
+        properties:
+          level:
+            type: integer
+            description: 承認レベル
+          approver_role:
+            type: string
+            description: 承認者ロール
+          status:
+            type: string
+            enum: [pending, approved, rejected]
+            description: 承認状況
+          deadline:
+            type: string
+            format: date-time
+            description: 承認期限
+    approval_history:
+      type: array
+      description: 承認履歴
+      items:
+        type: object
+        properties:
+          approver:
+            type: string
+            description: 承認者
+          action:
+            type: string
+            enum: [approved, rejected, escalated]
+            description: 承認アクション
+          timestamp:
+            type: string
+            format: date-time
+            description: アクション日時
+          comment:
+            type: string
+            description: コメント
+    next_actions:
+      type: array
+      description: 次のアクション
+      items:
+        type: object
+        properties:
+          action_type:
+            type: string
+            enum: [wait_approval, escalate, complete, reject]
+            description: アクションタイプ
+          target_role:
+            type: string
+            description: 対象ロール
+          deadline:
+            type: string
+            format: date-time
+            description: 実行期限
+    evidence_files:
+      type: array
+      description: 生成された証跡ファイル
+      items:
+        type: string
+        description: ファイルパス
+  required: [approval_status, required_approvals, approval_history, next_actions, evidence_files]
