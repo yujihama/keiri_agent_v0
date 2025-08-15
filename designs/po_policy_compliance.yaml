@@ -6,7 +6,7 @@ policy:
   on_error: continue
   retries: 0
 ui:
-  layout: [collect_po]
+  layout: [collect_po, collect_approval]
 graph:
   - id: collect_po
     description: POデータのアップロード
@@ -17,6 +17,18 @@ graph:
         - { id: po_csv, type: file, label: "POデータ (CSV)", required: true }
     out:
       collected_data: collected
+
+  - id: collect_approval
+    description: 承認入力の収集（UI）
+    block: ui.interactive_input
+    in:
+      mode: collect
+      requirements:
+        - { id: approver_id, type: text, label: "承認者ID", required: true, hint: "例: cfo" }
+        - { id: decision, type: select, label: "承認/却下", options: ["approve","reject"], default: "approve", required: true }
+        - { id: comment, type: text, label: "コメント", required: false }
+    out:
+      collected_data: approval_input
 
   - id: read_po
     description: PO CSVを読み込み
@@ -56,7 +68,7 @@ graph:
         levels:
           - { id: L1, approvers: ["cfo"], rule: { type: any } }
       decisions:
-        - { level_id: L1, approver_id: "cfo", decision: "approve", timestamp: "2025-08-14T00:00:00Z" }
+        - { level_id: L1, approver_id: "${collect_approval.approval_input.approver_id}", decision: "${collect_approval.approval_input.decision}", comment: "${collect_approval.approval_input.comment}" }
       context:
         subject: "PO Policy Check"
         total_items: ${enforce_policy.summary.items}
