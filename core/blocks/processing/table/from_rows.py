@@ -11,7 +11,8 @@ class FromRowsToDataFrameBlock(ProcessingBlock):
 
     def run(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
         rows = inputs.get("rows")
-        dtype = inputs.get("dtype") or None
+        # Default: make all columns string dtype unless explicitly overridden
+        requested_dtype = inputs.get("dtype") or None
         try:
             import pandas as pd  # type: ignore
         except Exception:
@@ -21,12 +22,24 @@ class FromRowsToDataFrameBlock(ProcessingBlock):
         if not isinstance(rows, list):
             return {"dataframe": pd.DataFrame()}  # type: ignore[name-defined]
         if rows and not isinstance(rows[0], dict):
-            return {"dataframe": pd.DataFrame(rows)}  # type: ignore[name-defined]
+            try:
+                df_nd = pd.DataFrame(rows, dtype=(requested_dtype if requested_dtype is not None else "string"))  # type: ignore[name-defined]
+            except Exception:
+                df_nd = pd.DataFrame(rows)  # type: ignore[name-defined]
+                try:
+                    df_nd = df_nd.astype("string")  # type: ignore[assignment]
+                except Exception:
+                    pass
+            return {"dataframe": df_nd}
 
         try:
-            df = pd.DataFrame(rows, dtype=None if dtype is None else dtype)  # type: ignore[name-defined]
+            df = pd.DataFrame(rows, dtype=(requested_dtype if requested_dtype is not None else "string"))  # type: ignore[name-defined]
         except Exception:
             df = pd.DataFrame(rows)  # type: ignore[name-defined]
+            try:
+                df = df.astype("string")  # type: ignore[assignment]
+            except Exception:
+                pass
         return {"dataframe": df}
 
 

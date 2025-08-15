@@ -178,7 +178,7 @@ class PlanRunner:
 
         log_path = self._make_run_log_path(plan)
         # Register path so blocks/utilities can export_log with this run_id
-        register_log_path(run_id, plan.id, log_path)
+        register_log_path(run_id, plan.id, log_path, parent_run_id=parent_run_id)
         def emit(event: Dict[str, Any]) -> None:
             write_event(run_id, event)
             if on_event is not None:
@@ -811,6 +811,11 @@ class PlanRunner:
                                     }, run_id=run_id, node_id=nid, tag="runner.block")
                                 except Exception:
                                     pass
+                                # Ensure UI block gets node id in ctx for its internal export_log calls
+                                try:
+                                    ctx.vars["__node_id"] = nid
+                                except Exception:
+                                    pass
                                 out = block.render(ctx, inputs, execution_context)
                                 elapsed_ms = int((perf_counter() - _t0) * 1000)
                                 emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
@@ -1017,6 +1022,10 @@ class PlanRunner:
                                         return results_by_alias
                                     else:
                                         # 非HITLモードでは即座にレンダリング
+                                        try:
+                                            ctx.vars["__node_id"] = nid
+                                        except Exception:
+                                            pass
                                         out = block.render(ctx, inputs, execution_context)
                             else:
                                 # create node-scoped context to include __node_id for block logging
@@ -1179,6 +1188,10 @@ class PlanRunner:
                                     # 非HITLモードでは即座にレンダリング
                                     emit({"type": "node_start", "run_id": run_id, "node": nid})
                                     _t0 = perf_counter()
+                                    try:
+                                        ctx.vars["__node_id"] = nid
+                                    except Exception:
+                                        pass
                                     out = block_obj.render(ctx, inputs, execution_context)
                                     elapsed_ms = int((perf_counter() - _t0) * 1000)
                                     emit({"type": "node_finish", "run_id": run_id, "node": nid, "elapsed_ms": elapsed_ms, "attempts": 1})
@@ -1394,10 +1407,14 @@ class PlanRunner:
                 pass
         
         # 通常のUI処理
+        # HITL（人手介在）既定時は runner 内で UI を描画しない
+        # -> 呼び出し元で ui_wait を発火し、アプリ側で保留UIを描画する
+        if self.default_ui_hitl:
+            return {"metadata": {"submitted": False}}
+        # 非HITL時のみ直接レンダリング
         if hasattr(block, 'render'):
             return block.render(ctx, inputs, execution_context)
-        else:
-            # フォールバック
-            return {"metadata": {"submitted": False, "error": "UI block not supported"}}
+        # フォールバック
+        return {"metadata": {"submitted": False, "error": "UI block not supported"}}
 
 

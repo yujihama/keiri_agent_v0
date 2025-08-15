@@ -1,0 +1,1 @@
+{"clusters": [[0, 1], [2, 3], [4], [5]], "candidates": [{"a": 0, "b": 1, "score": 0.8125}, {"a": 2, "b": 3, "score": 0.3125}], "summary": {"items": 6, "clusters": 4}}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Iterable
 import os
+import json
+import re
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.plan.logger import export_log
@@ -199,6 +201,62 @@ class PandasDataframeAgentBlock(ProcessingBlock):
             )
 
     @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        """Remove Markdown code fences (``` or ```json) if present."""
+        try:
+            # Remove ```json ... ``` or ``` ... ``` fences
+            text = re.sub(r"^\s*```(?:json)?\s*\n", "", text.strip(), flags=re.IGNORECASE)
+            text = re.sub(r"\n\s*```\s*$", "", text, flags=re.IGNORECASE)
+            return text.strip()
+        except Exception:
+            return text
+
+    def _coerce_strict_json_via_llm(self, llm: Any, raw_text: str, callback_handler: Any | None = None) -> str:
+        """Ask the LLM to convert arbitrary text into strict JSON, returning a string.
+
+        Output is expected to be JSON only (no code fences or explanations).
+        """
+        try:
+            # Use chat style input for compatibility across langchain versions
+            instruction = (
+                "以下のテキストを厳密に有効なJSONへ変換して返してください。\n"
+                "- 出力はJSON文字列のみ。説明やコードフェンスは出力しないこと。\n"
+                "- 可能な限り数値・日付を適切な型で表現してください。\n"
+                "- 入力が既にJSONの場合は、そのJSONを正規化（最小化）して返してください。\n\n"
+                "テキスト:\n" + raw_text
+            )
+            try:
+                from langchain_core.messages import HumanMessage  # type: ignore
+                msgs = [HumanMessage(content=instruction)]
+                msg = llm.invoke(msgs, config={"callbacks": [callback_handler]} if callback_handler else None)
+            except Exception:
+                # Fallback: try plain string
+                try:
+                    msg = llm.invoke(instruction, config={"callbacks": [callback_handler]} if callback_handler else None)
+                except TypeError:
+                    msg = llm.invoke(instruction)
+
+            content = getattr(msg, "content", None)
+            if not isinstance(content, str):
+                content = str(msg)
+            return self._strip_code_fences(content)
+        except Exception:
+            return raw_text
+
+    @staticmethod
+    def _extract_llm_output_from_exception(exc: Exception) -> str | None:
+        """Extract raw LLM output from common LangChain parsing errors if present."""
+        try:
+            text = str(getattr(exc, "args", [""])[0] or str(exc))
+            # Pattern like: Could not parse LLM output: `...`
+            m = re.search(r"Could not parse LLM output:\s*`([\s\S]*?)`", text)
+            if m:
+                return m.group(1)
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
     def _is_dataframe(obj: Any) -> bool:
         try:
             import pandas as pd  # noqa: F401
@@ -376,6 +434,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
 
         # DataFrame のみ取り出し順序を保って渡す
         dfs_ordered = [df for _, df in pairs]
+        print(f"dfs_ordered_shape:{[dfs_ordered[i].shape for i in range(len(dfs_ordered))]}")
 
         # create_pandas_dataframe_agent の import 位置は LangChain のバージョンで異なる
         agent_factory = None
@@ -416,6 +475,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                 allow_dangerous_code=True,
                 verbose=True,
                 callbacks=[callback_handler],
+                handle_parsing_errors=True,
             )
         except TypeError:
             try:
@@ -424,10 +484,17 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                     dfs_ordered,
                     allow_dangerous_code=True,
                     verbose=True,
-                    agent_executor_kwargs={"callbacks": [callback_handler]},
+                    agent_executor_kwargs={
+                        "callbacks": [callback_handler],
+                        "handle_parsing_errors": True,
+                    },
                 )
             except TypeError:
-                agent = agent_factory(llm, dfs_ordered, **agent_kwargs)
+                try:
+                    agent = agent_factory(llm, dfs_ordered, **agent_kwargs)
+                except TypeError:
+                    # Final fallback: minimal args
+                    agent = agent_factory(llm, dfs_ordered)
 
         # 実行
         try:
@@ -447,9 +514,35 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                     output_text = agent.run(instruction_text)
                 steps = None
         except Exception as e:
-            from core.errors import wrap_exception, ErrorCode
+            # Try to salvage output from parsing error message
+            extracted = self._extract_llm_output_from_exception(e)
+            if extracted is not None:
+                output_text = extracted
+                steps = None
+            else:
+                from core.errors import wrap_exception, ErrorCode
+                raise wrap_exception(e, ErrorCode.EXTERNAL_API_ERROR, inputs)
 
-            raise wrap_exception(e, ErrorCode.EXTERNAL_API_ERROR, inputs)
+        # JSON 変換（指示にJSONが含まれる場合は厳密JSONへ整形を試行）
+        final_output_text = output_text if isinstance(output_text, str) else str(output_text)
+        json_postprocessed = False
+        wants_json = "json" in instruction_text.lower()
+        if wants_json and final_output_text:
+            candidate = self._strip_code_fences(final_output_text)
+            try:
+                parsed = json.loads(candidate)
+                final_output_text = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+                json_postprocessed = True
+            except Exception:
+                fixed = self._coerce_strict_json_via_llm(llm, final_output_text, callback_handler)
+                cleaned = self._strip_code_fences(fixed)
+                try:
+                    parsed2 = json.loads(cleaned)
+                    final_output_text = json.dumps(parsed2, ensure_ascii=False, separators=(",", ":"))
+                    json_postprocessed = True
+                except Exception:
+                    # 最終的に失敗した場合は元のテキストを返す
+                    pass
 
         # サマリー
         datasets_meta: List[Dict[str, Any]] = []
@@ -475,10 +568,11 @@ class PandasDataframeAgentBlock(ProcessingBlock):
             "sample_rows": sample_rows,
             "datasets": datasets_meta,
             "verbose": True,
+            "json_postprocessed": json_postprocessed,
         }
 
         return {
-            "answer": output_text if isinstance(output_text, str) else str(output_text),
+            "answer": final_output_text,
             "intermediate_steps": steps,
             "summary": summary,
         }

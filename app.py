@@ -391,6 +391,12 @@ def main():
         edited_vars = {}
         default_hitl = True
         runner = PlanRunner(registry=registry, default_ui_hitl=default_hitl)
+
+        # 実行/再開クリック時に UI 表示を一時抑止し、次の描画で実行を開始するためのフラグを設定
+        def _on_run_click() -> None:
+            st.session_state["execute_requested"] = True
+            # 実行中は保留UIの自動描画を抑止
+            st.session_state["allow_pending_ui_render"] = False
         # 実行結果クリアボタン
         col_actions1, col_actions2 = st.columns([1,1])
         with col_actions1:
@@ -418,9 +424,8 @@ def main():
                     pass
                 try:
                     success_key = f"flow_success::{plan.id}"
-                    if success_key in st.session_state:
-                        del st.session_state[success_key]
-                    for k in ["auto_resume_run_id", "last_run_id", "last_pending_ui"]:
+                    keys = [success_key, "auto_resume_run_id", "last_run_id", "execute_requested", "allow_pending_ui_render", "run_in_progress"]
+                    for k in keys:
                         if k in st.session_state:
                             del st.session_state[k]
                 except Exception:
@@ -428,7 +433,8 @@ def main():
                 st.success("実行結果をクリアしました。『実行/再開』で最初からやり直せます。")
                 st.rerun()
         with col_actions2:
-            pass
+            # 実行ボタン（クリック時に実行要求フラグを立てる）
+            st.button("実行/再開", on_click=_on_run_click)
 
         # 保留UIの検出と実際のUIブロック描画（手動run_id優先、なければ最新を自動検出）
         try:
@@ -467,7 +473,13 @@ def main():
                     except Exception:
                         continue
 
-        if pending and plan_for_pending is not None and pending_run_id:
+        # 実行要求中/実行中は保留UIの描画を抑止し、ui_wait で明示的に許可されるまで待つ
+        can_render_pending = (
+            (not st.session_state.get("execute_requested"))
+            and (not st.session_state.get("run_in_progress"))
+            and st.session_state.get("allow_pending_ui_render", True)
+        )
+        if can_render_pending and pending and plan_for_pending is not None and pending_run_id:
             # 実際のUIブロックを描画し、ユーザーの明示操作で保存できるようにする
             try:
                 node_id = pending.get("node_id")
@@ -678,10 +690,10 @@ def main():
                 if et == "node_finish":
                     sev, msg = _format_event_message(ev)
                     _push_and_render(sev, msg)
-                if et == "ui_wait":
-                    # 次の描画で即時にUIを出せるようセッションに保持
-                    st.session_state["last_pending_ui"] = ev
+                # ui_wait では保留UIは state ファイルの検出で扱うため、ここでは何もしない
 
+            # 実行開始: 実行中フラグON（この描画では保留UIを表示しない）
+            st.session_state["run_in_progress"] = True
             with _disable_headless_for_ui():
                 results = runner.run(
                     plan,
@@ -698,17 +710,27 @@ def main():
                         try:
                             st_json = json.loads(f.read_text(encoding="utf-8"))
                             cand = st_json.get("pending_ui")
+                            print(f"cand:{cand}")
                             if cand and not cand.get("submitted"):
                                 _rid = f.stem.replace(".state", "")
                                 st.session_state["auto_resume_run_id"] = _rid
+                                # 実行フェーズ終了。次の描画で保留UIを表示可能にして rerun
+                                st.session_state["execute_requested"] = False
+                                st.session_state["allow_pending_ui_render"] = True
+                                st.session_state["run_in_progress"] = False
                                 st.rerun()
-                        except Exception:
+                        except Exception as e:
+                            print(f"error:{e}")
                             continue
             except Exception:
                 pass
             progress.progress(1.0, text="完了")
             with st.expander("結果の詳細(JSON)", expanded=False):
                 st.json(results)
+            # 実行フェーズ終了。以降は保留UIを表示可能に戻す
+            st.session_state["execute_requested"] = False
+            st.session_state["allow_pending_ui_render"] = True
+            st.session_state["run_in_progress"] = False
             # 出力方法: vars.output_method に従い UI を切り替え
             try:
                 output_method = (plan.vars or {}).get("output_method", "download")
@@ -834,10 +856,12 @@ def main():
             except Exception:
                 pass
 
-        # 実行ボタン
-        if st.button("実行/再開"):
+        # 実行要求が立っていれば自動的に実行を開始（この描画では保留UIは非表示）
+        if st.session_state.get("execute_requested"):
             resume_id = st.session_state.get("auto_resume_run_id") or None
             _execute_run(resume_id=resume_id)
+
+        # ボタンは上部（col_actions2）に配置済み
 
     with tabs[2]:
         st.subheader("ログ")
@@ -873,14 +897,46 @@ def main():
                             except Exception:
                                 continue
 
-                        # 簡易フィルタ
+                        # フィルタ
                         types = sorted({e.get("type") for e in events})
                         sel_types = st.multiselect("イベント種類", options=types, default=types)
-                        # 親子run_idでスレッドを追跡
+                        nodes = sorted({e.get("node") for e in events if e.get("node")})
+                        sel_nodes = st.multiselect("ノード", options=nodes, default=nodes)
+                        tags = sorted({e.get("tag") for e in events if e.get("tag")})
+                        sel_tags = st.multiselect("タグ", options=tags, default=tags)
+                        levels = sorted({e.get("level") for e in events if e.get("level")})
+                        sel_levels = st.multiselect("レベル", options=levels, default=levels)
+                        # スレッド追跡
                         parent = st.text_input("parent_run_id フィルタ", value="")
+                        # テキスト検索（message / data / error_details を対象）
+                        q = st.text_input("テキスト検索", value="")
                         filtered = [e for e in events if e.get("type") in sel_types]
+                        if sel_nodes:
+                            filtered = [e for e in filtered if e.get("node") in sel_nodes or e.get("node") is None]
+                        if sel_tags:
+                            filtered = [e for e in filtered if e.get("tag") in sel_tags or e.get("tag") is None]
+                        if sel_levels:
+                            filtered = [e for e in filtered if e.get("level") in sel_levels or e.get("level") is None]
                         if parent:
                             filtered = [e for e in filtered if e.get("parent_run_id") == parent or e.get("run_id") == parent]
+                        if q:
+                            ql = q.lower()
+                            def _hit(ev):
+                                try:
+                                    src = [
+                                        str(ev.get("message", "")),
+                                        json.dumps(ev.get("data"), ensure_ascii=False, default=str),
+                                        json.dumps(ev.get("error_details"), ensure_ascii=False, default=str),
+                                    ]
+                                    return any(ql in s.lower() for s in src if s)
+                                except Exception:
+                                    return False
+                            filtered = [e for e in filtered if _hit(e)]
+                        # seq 昇順に並び替え（なければ ts ）
+                        try:
+                            filtered.sort(key=lambda e: (int(e.get("seq", 0)), str(e.get("ts", ""))))
+                        except Exception:
+                            filtered.sort(key=lambda e: str(e.get("ts", "")))
                         st.write(f"{len(filtered)} events")
                         # サマリ（成功/失敗/スキップ）
                         ok = sum(1 for e in filtered if e.get("type") == "node_finish")
@@ -929,6 +985,14 @@ def main():
                                 st.info("フロー図表示用のPlan定義を見つけられませんでした（designsまたはログ内のplan_specを参照できませんでした）。")
                         except Exception as _viz_err:
                             st.warning(f"DAG可視化でエラー: {_viz_err}")
+                        # コンパクト表形式（主要カラム）
+                        try:
+                            import pandas as _pd  # type: ignore
+                            cols = ["seq", "ts", "type", "node", "tag", "level", "message"]
+                            df = _pd.DataFrame([{k: e.get(k) for k in cols} for e in filtered])
+                            st.dataframe(df)
+                        except Exception:
+                            pass
                         st.json(filtered)
                         if not filtered and lines:
                             st.info("イベントの解析に失敗したため、Rawログを表示します。")

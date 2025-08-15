@@ -6,3 +6,4 @@ __pycache__/
 .git/
 runs/*
 .pytest_cache/*
+.cursor/*

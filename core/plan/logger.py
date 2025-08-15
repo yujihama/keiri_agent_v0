@@ -16,17 +16,21 @@ _RUN_LOG_PATHS: dict[str, "_RunLogInfo"] = {}
 class _RunLogInfo:
     plan_id: str
     path: Path
+    parent_run_id: Optional[str] = None
     # Per-log-file lock to guarantee atomic append from multiple threads
     lock: Lock = field(default_factory=Lock)
+    # Monotonic sequence per event within a run
+    seq: int = 0
 
 
-def register_log_path(run_id: str, plan_id: str, path: Path) -> None:
+def register_log_path(run_id: str, plan_id: str, path: Path, parent_run_id: Optional[str] = None) -> None:
     """Register JSONL log file path for a run.
 
-    This enables blocks and utilities to append structured events via run_id.
+    Enables blocks and utilities to append structured events via run_id.
+    Stores parent_run_id and initializes a per-run event sequence counter.
     """
     with _RUN_LOG_PATHS_LOCK:
-        _RUN_LOG_PATHS[run_id] = _RunLogInfo(plan_id=plan_id, path=path)
+        _RUN_LOG_PATHS[run_id] = _RunLogInfo(plan_id=plan_id, path=path, parent_run_id=parent_run_id)
 
 
 def _lookup(run_id: str) -> Optional[_RunLogInfo]:
@@ -41,22 +45,25 @@ def _now_iso() -> str:
 def write_event(run_id: str, event: Dict[str, Any]) -> None:
     """Append a JSON event to the JSONL file for the given run_id.
 
-    Adds standard fields: ts, plan, run_id, and schema version if missing.
+    Adds standard fields to every event: ts, plan, run_id, parent_run_id, seq, and schema version.
     """
     info = _lookup(run_id)
     if info is None:
         # If called too early or from an unknown run, silently ignore to avoid crashing user code.
         return
-    ev = dict(event)
-    ev.setdefault("ts", _now_iso())
-    ev.setdefault("plan", info.plan_id)
-    ev.setdefault("run_id", run_id)
-    ev.setdefault("schema", "v1")
-    line = json.dumps(ev, ensure_ascii=False) + "\n"
     # Ensure directory exists
     info.path.parent.mkdir(parents=True, exist_ok=True)
-    # Serialize writes per log file to avoid interleaved JSON fragments
+    # Serialize writes per log file and assign a monotonic sequence
     with info.lock:
+        ev = dict(event)
+        info.seq += 1
+        ev["seq"] = info.seq
+        ev["ts"] = _now_iso()
+        ev["plan"] = info.plan_id
+        ev["run_id"] = run_id
+        ev["parent_run_id"] = info.parent_run_id
+        ev["schema"] = "v1"
+        line = json.dumps(ev, ensure_ascii=False) + "\n"
         with info.path.open("a", encoding="utf-8") as f:
             f.write(line)
 

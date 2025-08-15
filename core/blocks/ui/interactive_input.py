@@ -36,10 +36,34 @@ class InteractiveInputBlock(UIBlock):
     id = "ui.interactive_input"
     version = "0.1.0"
 
+    def _log(self, ctx: BlockContext, data: Dict[str, Any], tag: str) -> None:
+        """Export log safely without raising errors.
+
+        Keeping behavior identical to scattered try/except calls while
+        centralizing the logic for readability.
+        """
+        try:
+            export_log(data, ctx=ctx, tag=tag)
+        except Exception:
+            pass
+
     def render(self, ctx: BlockContext, inputs: Dict[str, Any], execution_context: Optional[Any] = None) -> Dict[str, Any]:
+        # 実行フェーズ中は UI の描画を抑止（app 側で ui_wait → 保留UI描画の順に統一するため）
+        try:
+            if st.session_state.get("run_in_progress") or (
+                st.session_state.get("execute_requested") and not st.session_state.get("allow_pending_ui_render", True)
+            ):
+                return {
+                    "approved": False,
+                    "response": None,
+                    "metadata": {"submitted": False, "suspended": True, "mode": inputs.get("mode", "collect")},
+                }
+        except Exception:
+            pass
         # ヘッドレスモードの処理（引数ベース）
         if execution_context and getattr(execution_context, 'headless_mode', False):
             # node_id を付与してモック応答の選択を正確化
+            st.error("ヘッドレスモードが有効化されています")
             _inputs = dict(inputs)
             _inputs.setdefault("node_id", ctx.vars.get("__node_id", ""))
             return self._headless_response(_inputs, execution_context)
@@ -180,7 +204,7 @@ class InteractiveInputBlock(UIBlock):
                     else:
                         item.update({"type": type(v).__name__})
                     inputs_summary.append(item)
-                export_log({"mode": "collect", "inputs": inputs_summary}, ctx=ctx, tag="ui.collect_submitted")
+                self._log(ctx, {"mode": "collect", "inputs": inputs_summary}, tag="ui.collect_submitted")
             except Exception:
                 pass
 
@@ -211,10 +235,7 @@ class InteractiveInputBlock(UIBlock):
         # コメント入力
         comment = st.text_area("コメント（任意）", key=f"comment_{ctx.run_id}")
         # ログ: 承認結果（コメントの長さのみ）
-        try:
-            export_log({"mode": "confirm", "approved": approved, "comment_len": len(comment or "")}, ctx=ctx, tag="ui.confirm")
-        except Exception:
-            pass
+        self._log(ctx, {"mode": "confirm", "approved": approved, "comment_len": len(comment or "")}, tag="ui.confirm")
         
         return {
             "collected_data": {"comment": comment} if comment else {},
@@ -245,12 +266,14 @@ class InteractiveInputBlock(UIBlock):
         chat_key = f"chat_history_{ctx.run_id}"
         if chat_key not in st.session_state:
             st.session_state[chat_key] = []
+        initial_turn = (len(st.session_state[chat_key]) == 0)
         
         # ノード単位の状態管理（収集データや進行状況の保持）
         node_id = ctx.vars.get("__node_id", base_key)
         with NodeStateContext(ctx.vars.get("__plan_id", "default"), ctx.run_id, node_id, self.version) as state:
             collected_data: Dict[str, Any] = state.get("collected_data", {})
             submitted: bool = bool(state.get("submitted", False))
+            # デバッグ出力は抑止（可読性・保守性のため）
 
             # 要件なしの場合は従来チャット挙動
             if not requirements:
@@ -261,10 +284,7 @@ class InteractiveInputBlock(UIBlock):
                 if user_input:
                     st.session_state[chat_key].append({"role": "user", "content": user_input})
                     st.session_state[chat_key].append({"role": "assistant", "content": f"了解しました: {user_input}"})
-                    try:
-                        export_log({"mode": "inquire", "event": "chat_freeform", "message": user_input[:200]}, ctx=ctx, tag="ui.inquire")
-                    except Exception:
-                        pass
+                    self._log(ctx, {"mode": "inquire", "event": "chat_freeform", "message": user_input[:200]}, tag="ui.inquire")
                 return {
                     "collected_data": {"chat_history": st.session_state.get(chat_key, [])},
                     "approved": True,
@@ -345,62 +365,22 @@ class InteractiveInputBlock(UIBlock):
                 st.error("LLMのAPIキーが未設定のため、このUIは実行できません。")
                 raise RuntimeError("LLM key is required for inquire mode")
 
-            # チャット履歴表示
-            for msg in st.session_state[chat_key]:
-                with st.chat_message(msg["role"]):
-                    st.write(msg["content"])
+            # Structured output と LLM 準備（関数内で一度だけ）
+            class UpdatedValue(BaseModel):
+                field_id: str = Field(description="更新するフィールドID")
+                value: str = Field(description="抽出された値")
 
-            # ユーザー入力
-            user_input = st.chat_input("メッセージを入力...")
-            
-            # 初回質問生成 or ユーザー入力処理
-            need_llm_call = False
-            if len(st.session_state[chat_key]) == 0:
-                # 初回質問
-                need_llm_call = True
-                user_message = None
-            elif user_input:
-                # ユーザーからの新しい入力
-                st.session_state[chat_key].append({"role": "user", "content": user_input})
-                try:
-                    export_log({"mode": "inquire", "event": "chat_user", "message": user_input[:200]}, ctx=ctx, tag="ui.inquire")
-                except Exception:
-                    pass
-                need_llm_call = True
-                user_message = user_input
-            else:
-                # 入力待ち状態
-                try:
-                    export_log({"mode": "inquire", "event": "chat_update", "message": (user_input or "")[:200]}, ctx=ctx, tag="ui.inquire")
-                except Exception:
-                    pass
-                return {
-                    "approved": False,
-                    "response": None,
-                    "metadata": {"timestamp": datetime.now().isoformat(), "mode": "inquire", "done": False},
-                }
+            class LLMResponse(BaseModel):
+                extracted_values: List[UpdatedValue] = Field(default_factory=list, description="ユーザーの回答から抽出した値")
+                next_question: Optional[str] = Field(default=None, description="次にユーザーに質問する内容（完了時はnull）")
+                is_complete: bool = Field(default=False, description="すべての必須情報が収集できたか")
 
-            if need_llm_call:
-                # LLM呼び出し
-                missing_fields = _get_missing_fields()
-                
-                # Structured Output定義
-                class UpdatedValue(BaseModel):
-                    field_id: str = Field(description="更新するフィールドID")
-                    value: str = Field(description="抽出された値")
+            model_name = os.getenv("KEIRI_AGENT_LLM_MODEL", "gpt-4.1")
+            temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0.2"))
+            llm, _model_label = build_chat_llm(temperature=temperature)
+            structured_llm = llm.with_structured_output(LLMResponse)
 
-                class LLMResponse(BaseModel):
-                    extracted_values: List[UpdatedValue] = Field(default_factory=list, description="ユーザーの回答から抽出した値")
-                    next_question: Optional[str] = Field(default=None, description="次にユーザーに質問する内容（完了時はnull）")
-                    is_complete: bool = Field(default=False, description="すべての必須情報が収集できたか")
-
-                model_name = os.getenv("KEIRI_AGENT_LLM_MODEL", "gpt-4.1")
-                temperature = float(os.getenv("KEIRI_AGENT_LLM_TEMPERATURE", "0.2"))
-                llm, _model_label = build_chat_llm(temperature=temperature)
-                structured_llm = llm.with_structured_output(LLMResponse)
-
-                # システムプロンプト
-                sys_prompt = """あなたは情報収集アシスタントです。以下のrequirementsに基づいて、ユーザーから必要な情報を収集してください。
+            sys_prompt = """あなたは情報収集アシスタントです。以下のrequirementsに基づいて、ユーザーから必要な情報を収集してください。
 
 ルール:
 1. ユーザーの回答から値を抽出し、extracted_valuesに設定
@@ -425,95 +405,148 @@ Requirements:
 
 注意: 各requirementのhintフィールドには、ユーザーが回答しやすくするための追加情報が含まれています。質問時にこの情報を活用してください。"""
 
-                # LLM呼び出し
-                with st.spinner("回答を確認中..."):
-                    try:
-                        payload = {
-                            "requirements": requirements,
-                            "collected_data": collected_data,
-                            "missing_fields": missing_fields,
-                            "chat_history": st.session_state[chat_key],
-                            "user_message": user_message
-                        }
-                        
-                        response = structured_llm.invoke([
-                            SystemMessage(content=sys_prompt.format(**payload)),
-                            HumanMessage(content=f"ユーザーメッセージ: {user_message or '初回質問をお願いします'}")
-                        ])
-                        # LLMが生成した次の質問/状態をデバッグ出力
-                        try:
-                            export_log({
-                                "mode": "inquire",
-                                "event": "chat_llm",
-                                "next_question": (response.next_question or "")[:200],
-                                "is_complete": bool(response.is_complete),
-                                "extracted_count": len(response.extracted_values or []),
-                            }, ctx=ctx, tag="ui.inquire")
-                        except Exception:
-                            pass
-                        
-                        # 抽出された値を更新
-                        for update in response.extracted_values:
-                            field_id = update.field_id
-                            value = update.value
-                            
-                            # requirement情報を取得
-                            req = next((r for r in requirements if r.get("id") == field_id), None)
-                            if req:
-                                if req.get("type") == "select":
-                                    options = req.get("options", [])
-                                    value = _normalize_select_value(field_id, value, options)
-                                    if value in options:
-                                        collected_data[field_id] = value
-                                else:
-                                    collected_data[field_id] = value
-                        
-                        # データを保存
-                        state.set("collected_data", dict(collected_data))
-                        try:
-                            export_log({
-                                "mode": "inquire",
-                                "event": "extracted",
-                                "updated_fields": [u.field_id for u in response.extracted_values],
-                                "missing_after": _get_missing_fields(),
-                            }, ctx=ctx, tag="ui.inquire")
-                        except Exception:
-                            pass
-                        
-                        # 完了チェック
-                        if response.is_complete or not _get_missing_fields():
-                            completion_msg = "必要な情報の収集が完了しました。ありがとうございました。"
-                            st.session_state[chat_key].append({"role": "assistant", "content": completion_msg})
-                            try:
-                                export_log({"mode": "inquire", "event": "chat_assistant", "message": completion_msg[:200]}, ctx=ctx, tag="ui.inquire")
-                            except Exception:
-                                pass
-                            state.set("submitted", True)
-                            st.rerun()
+            def _invoke_llm(user_message: Optional[str], show_spinner: bool = False, spinner_placeholder: Optional[Any] = None) -> LLMResponse:
+                """LLM呼び出しを一元化。必要に応じてスピナー表示。"""
+                payload = {
+                    "requirements": requirements,
+                    "collected_data": collected_data,
+                    "missing_fields": _get_missing_fields(),
+                    "chat_history": st.session_state[chat_key],
+                    "user_message": user_message,
+                }
+
+                def _call() -> LLMResponse:
+                    return structured_llm.invoke([
+                        SystemMessage(content=sys_prompt.format(**payload)),
+                        HumanMessage(content=f"ユーザーメッセージ: {user_message or '初回質問をお願いします'}"),
+                    ])
+
+                if show_spinner and spinner_placeholder is not None:
+                    with spinner_placeholder.container():
+                        with st.spinner("回答を確認中..."):
+                            response = _call()
+                else:
+                    response = _call()
+
+                self._log(ctx, {
+                    "mode": "inquire",
+                    "event": "chat_llm",
+                    "next_question": (response.next_question or "")[:200],
+                    "is_complete": bool(response.is_complete),
+                    "extracted_count": len(response.extracted_values or []),
+                }, tag="ui.inquire")
+
+                return response
+
+            def _apply_llm_response(response: LLMResponse) -> None:
+                for update in response.extracted_values:
+                    field_id = update.field_id
+                    value = update.value
+                    req = next((r for r in requirements if r.get("id") == field_id), None)
+                    if req:
+                        if req.get("type") == "select":
+                            options = req.get("options", [])
+                            value = _normalize_select_value(field_id, value, options)
+                            if value in options:
+                                collected_data[field_id] = value
                         else:
-                            # 次の質問を追加
-                            if response.next_question:
-                                st.session_state[chat_key].append({"role": "assistant", "content": response.next_question})
-                                try:
-                                    export_log({"mode": "inquire", "event": "chat_assistant", "message": (response.next_question or "")[:200]}, ctx=ctx, tag="ui.inquire")
-                                except Exception:
-                                    pass
-                                st.rerun()
-                            else:
-                                # 質問がない場合は不足フィールドから自動生成
-                                missing = _get_missing_fields()
-                                if missing:
-                                    auto_question = f"次に{missing[0]}について教えてください。"
-                                    st.session_state[chat_key].append({"role": "assistant", "content": auto_question})
-                                    try:
-                                        export_log({"mode": "inquire", "event": "chat_auto_question", "message": auto_question[:200]}, ctx=ctx, tag="ui.inquire")
-                                    except Exception:
-                                        pass
-                                    st.rerun()
-                                
-                    except Exception as e:
-                        st.error(f"LLM呼び出しに失敗しました: {e}")
-                        raise
+                            collected_data[field_id] = value
+
+                state.set("collected_data", dict(collected_data))
+                self._log(ctx, {
+                    "mode": "inquire",
+                    "event": "extracted",
+                    "updated_fields": [u.field_id for u in response.extracted_values],
+                    "missing_after": _get_missing_fields(),
+                }, tag="ui.inquire")
+
+            def _handle_completion_or_next(response: LLMResponse, is_initial: bool, assistant_placeholder: Optional[Any] = None) -> None:
+                if response.is_complete or not _get_missing_fields():
+                    completion_msg = "必要な情報の収集が完了しました。ありがとうございました。"
+                    st.session_state[chat_key].append({"role": "assistant", "content": completion_msg})
+                    self._log(ctx, {"mode": "inquire", "event": "chat_assistant", "message": completion_msg[:200]}, tag="ui.inquire")
+                    state.set("submitted", True)
+                    # 非初回は即時描画でユーザーに応答を見せる
+                    if not is_initial and assistant_placeholder is not None:
+                        with assistant_placeholder.container():
+                            with st.chat_message("assistant"):
+                                st.write(completion_msg)
+                else:
+                    if response.next_question:
+                        st.session_state[chat_key].append({"role": "assistant", "content": response.next_question})
+                        self._log(ctx, {"mode": "inquire", "event": "chat_assistant", "message": (response.next_question or "")[:200]}, tag="ui.inquire")
+                        if not is_initial and assistant_placeholder is not None:
+                            with assistant_placeholder.container():
+                                with st.chat_message("assistant"):
+                                    st.write(response.next_question)
+                    else:
+                        missing = _get_missing_fields()
+                        if missing:
+                            auto_question = f"次に{missing[0]}について教えてください。"
+                            st.session_state[chat_key].append({"role": "assistant", "content": auto_question})
+                            self._log(ctx, {"mode": "inquire", "event": "chat_auto_question", "message": auto_question[:200]}, tag="ui.inquire")
+                            if not is_initial and assistant_placeholder is not None:
+                                with assistant_placeholder.container():
+                                    with st.chat_message("assistant"):
+                                        st.write(auto_question)
+
+            # 初回は先にLLMから最初の質問を取得して履歴に追加（質問→入力欄の順で表示）
+            if initial_turn:
+                try:
+                    response = _invoke_llm(user_message=None, show_spinner=False)
+                    _apply_llm_response(response)
+                    _handle_completion_or_next(response, is_initial=True)
+                except Exception as e:
+                    print(e)
+                    st.error(f"LLM呼び出しに失敗しました: {e}")
+                    raise
+
+            # チャット履歴表示
+            for msg in st.session_state[chat_key]:
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+
+            # 即時エコー/スピナー用のプレースホルダ（入力欄より上に配置）
+            _user_echo_placeholder = st.empty()
+            _spinner_placeholder = st.empty()
+
+            # ユーザー入力（常に一番下に表示）
+            user_input = st.chat_input("メッセージを入力...")
+            
+            # 初回質問生成 or ユーザー入力処理
+            need_llm_call = False
+            if len(st.session_state[chat_key]) == 0:
+                # 初回質問
+                need_llm_call = True
+                user_message = None
+            elif user_input:
+                # ユーザーからの新しい入力
+                st.session_state[chat_key].append({"role": "user", "content": user_input})
+                self._log(ctx, {"mode": "inquire", "event": "chat_user", "message": user_input[:200]}, tag="ui.inquire")
+                # 入力は即時に画面へ反映（入力欄より上のプレースホルダに表示）
+                with _user_echo_placeholder.container():
+                    with st.chat_message("user"):
+                        st.write(user_input)
+                need_llm_call = True
+                user_message = user_input
+            else:
+                # 入力待ち状態
+                self._log(ctx, {"mode": "inquire", "event": "chat_update", "message": (user_input or "")[:200]}, tag="ui.inquire")
+                return {
+                    "approved": False,
+                    "response": None,
+                    "metadata": {"timestamp": datetime.now().isoformat(), "mode": "inquire", "done": False, "submitted": False},
+                }
+
+            if need_llm_call:
+                try:
+                    response = _invoke_llm(user_message=user_message, show_spinner=True, spinner_placeholder=_spinner_placeholder)
+                    _apply_llm_response(response)
+                    _handle_completion_or_next(response, is_initial=False, assistant_placeholder=_spinner_placeholder)
+                except Exception as e:
+                    print(e)
+                    st.error(f"LLM呼び出しに失敗しました: {e}")
+                    raise
 
             # 収集状況のサマリー表示
             if collected_data:
@@ -523,7 +556,7 @@ Requirements:
             return {
                 "approved": False,
                 "response": None,
-                "metadata": {"timestamp": datetime.now().isoformat(), "mode": "inquire", "done": False},
+                "metadata": {"timestamp": datetime.now().isoformat(), "mode": "inquire", "done": False, "submitted": False},
             }
     
     def _render_mixed_mode(self, ctx: BlockContext, requirements: List[Dict], message: str, context: Dict, base_key: str) -> Dict[str, Any]:
