@@ -61,7 +61,7 @@ class CurrentApproval(BaseModel):
 class ApprovalBlock(ProcessingBlock):
     """承認統制ブロック"""
     
-    def execute(self, inputs: Dict[str, Any], context: BlockContext) -> Dict[str, Any]:
+    def run(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """承認フローの実行"""
         try:
             # 入力データの検証と変換
@@ -282,21 +282,21 @@ class ApprovalBlock(ProcessingBlock):
         """従来方式での証跡ファイル生成"""
         evidence_files = []
         
-        if context.workspace:
+        if ctx.workspace:
             # 承認要求ファイル
-            request_file = os.path.join(context.workspace, f"approval_request_{request.request_id}_{context.run_id}.json")
+            request_file = os.path.join(ctx.workspace, f"approval_request_{request.request_id}_{ctx.run_id}.json")
             with open(request_file, 'w', encoding='utf-8') as f:
                 json.dump(request.dict(), f, ensure_ascii=False, indent=2, default=str)
             evidence_files.append(request_file)
             
             # 承認履歴ファイル
-            history_file = os.path.join(context.workspace, f"approval_history_{request.request_id}_{context.run_id}.json")
+            history_file = os.path.join(ctx.workspace, f"approval_history_{request.request_id}_{ctx.run_id}.json")
             with open(history_file, 'w', encoding='utf-8') as f:
                 json.dump([approval.dict() for approval in approvals], f, ensure_ascii=False, indent=2, default=str)
             evidence_files.append(history_file)
             
             # 承認ポリシーファイル
-            policy_file = os.path.join(context.workspace, f"approval_policy_{request.request_id}_{context.run_id}.json")
+            policy_file = os.path.join(ctx.workspace, f"approval_policy_{request.request_id}_{ctx.run_id}.json")
             with open(policy_file, 'w', encoding='utf-8') as f:
                 json.dump(policy.dict(), f, ensure_ascii=False, indent=2, default=str)
             evidence_files.append(policy_file)
@@ -315,9 +315,9 @@ class ApprovalBlock(ProcessingBlock):
             evidence_id=request_evidence_id,
             evidence_type=EvidenceType.APPROVAL_RECORD,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{request_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{request_evidence_id}.json",
             file_hash="",  # store_evidenceで計算
             file_size=0,   # store_evidenceで計算
             retention_until=datetime.now() + timedelta(days=2555),  # 7年保存
@@ -336,9 +336,9 @@ class ApprovalBlock(ProcessingBlock):
             evidence_id=history_evidence_id,
             evidence_type=EvidenceType.APPROVAL_RECORD,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{history_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{history_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),
@@ -361,9 +361,9 @@ class ApprovalBlock(ProcessingBlock):
             evidence_id=policy_evidence_id,
             evidence_type=EvidenceType.CONTROL_RESULT,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{policy_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{policy_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),

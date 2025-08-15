@@ -20,7 +20,7 @@ from core.evidence.vault import EvidenceVault
 class PolicyEnforceBlock(ProcessingBlock):
     """ポリシー強制実行ブロック"""
     
-    def execute(self, inputs: Dict[str, Any], context: BlockContext) -> Dict[str, Any]:
+    def run(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """ポリシー検証の実行"""
         try:
             start_time = time.time()
@@ -221,14 +221,14 @@ class PolicyEnforceBlock(ProcessingBlock):
                 evidence_id=evidence_id,
                 evidence_type=EvidenceType.CONTROL_RESULT,
                 block_id=self.__class__.__name__,
-                run_id=execution_context.get('run_id', ''),
+                run_id=execution_ctx.get('run_id', ''),
                 timestamp=datetime.now(),
                 file_path=f"evidence/policy/{datetime.now().strftime('%Y-%m-%d')}/{evidence_id}.json",
                 file_hash="",
                 file_size=0,
                 retention_until=datetime.now() + timedelta(days=2555),
                 tags=['policy_enforcement', 'compliance_check', 'control_result'],
-                department=execution_context.get('department'),
+                department=execution_ctx.get('department'),
                 risk_level='high' if violations else 'low'
             )
             

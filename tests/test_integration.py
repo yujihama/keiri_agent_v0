@@ -74,7 +74,7 @@ class TestAuditControlsIntegration:
         }
         
         setattr(block_context, 'evidence_vault', evidence_vault)
-        approval_result = approval_block.execute(approval_inputs, block_context)
+        approval_result = approval_block.run(approval_inputs, block_context)
         
         # 3. 職務分掌チェック
         sod_block = SodCheckBlock()
@@ -98,7 +98,7 @@ class TestAuditControlsIntegration:
             }
         }
         
-        sod_result = sod_block.execute(sod_inputs, block_context)
+        sod_result = sod_block.run(sod_inputs, block_context)
         
         # 4. ポリシー検証
         policy_block = PolicyEnforceBlock()
@@ -121,7 +121,7 @@ class TestAuditControlsIntegration:
             }
         }
         
-        policy_result = policy_block.execute(policy_inputs, block_context)
+        policy_result = policy_block.run(policy_inputs, block_context)
         
         # 5. サンプリング実行
         sampling_block = SamplingBlock()
@@ -154,7 +154,7 @@ class TestAuditControlsIntegration:
             }
         }
         
-        sampling_result = sampling_block.execute(sampling_inputs, block_context)
+        sampling_result = sampling_block.run(sampling_inputs, block_context)
         
         # 結果検証
         assert approval_result["approval_result"]["success"] is True
@@ -290,7 +290,7 @@ class TestAuditControlsIntegration:
                 }
             }
             
-            result = policy_block.execute(inputs, block_context)
+            result = policy_block.run(block_context, inputs)
             scenario_results.append({
                 "scenario": scenario["name"],
                 "result": result,

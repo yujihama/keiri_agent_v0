@@ -73,7 +73,7 @@ class Violation(BaseModel):
 class SodCheckBlock(ProcessingBlock):
     """職務分掌チェックブロック"""
     
-    def execute(self, inputs: Dict[str, Any], context: BlockContext) -> Dict[str, Any]:
+    def run(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """職務分掌チェックの実行"""
         try:
             # 入力データの検証と変換
@@ -310,14 +310,14 @@ class SodCheckBlock(ProcessingBlock):
             if len(parts) == 2:
                 field = parts[0].strip()
                 value = parts[1].strip().strip('"\'')
-                return context.get(field) == value
+                return ctx.get(field) == value
         
         if 'amount >' in condition:
             parts = condition.split('>')
             if len(parts) == 2:
                 try:
                     threshold = float(parts[1].strip())
-                    return (context.get('amount', 0) > threshold)
+                    return (ctx.get('amount', 0) > threshold)
                 except ValueError:
                     return False
         
@@ -400,21 +400,21 @@ class SodCheckBlock(ProcessingBlock):
         """従来方式での証跡ファイル生成"""
         evidence_files = []
         
-        if context.workspace:
+        if ctx.workspace:
             # 取引データファイル
-            transaction_file = os.path.join(context.workspace, f"sod_transaction_{transaction.transaction_id}_{context.run_id}.json")
+            transaction_file = os.path.join(ctx.workspace, f"sod_transaction_{transaction.transaction_id}_{ctx.run_id}.json")
             with open(transaction_file, 'w', encoding='utf-8') as f:
                 json.dump(transaction.dict(), f, ensure_ascii=False, indent=2, default=str)
             evidence_files.append(transaction_file)
             
             # 違反結果ファイル
-            violations_file = os.path.join(context.workspace, f"sod_violations_{transaction.transaction_id}_{context.run_id}.json")
+            violations_file = os.path.join(ctx.workspace, f"sod_violations_{transaction.transaction_id}_{ctx.run_id}.json")
             with open(violations_file, 'w', encoding='utf-8') as f:
                 json.dump([v.dict() for v in violations], f, ensure_ascii=False, indent=2, default=str)
             evidence_files.append(violations_file)
             
             # ロール分析ファイル
-            analysis_file = os.path.join(context.workspace, f"sod_analysis_{transaction.transaction_id}_{context.run_id}.json")
+            analysis_file = os.path.join(ctx.workspace, f"sod_analysis_{transaction.transaction_id}_{ctx.run_id}.json")
             with open(analysis_file, 'w', encoding='utf-8') as f:
                 json.dump(role_analysis, f, ensure_ascii=False, indent=2)
             evidence_files.append(analysis_file)
@@ -433,9 +433,9 @@ class SodCheckBlock(ProcessingBlock):
             evidence_id=transaction_evidence_id,
             evidence_type=EvidenceType.CONTROL_RESULT,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{transaction_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{transaction_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),
@@ -454,9 +454,9 @@ class SodCheckBlock(ProcessingBlock):
             evidence_id=violations_evidence_id,
             evidence_type=EvidenceType.CONTROL_RESULT,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{violations_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{violations_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),
@@ -479,9 +479,9 @@ class SodCheckBlock(ProcessingBlock):
             evidence_id=analysis_evidence_id,
             evidence_type=EvidenceType.CONTROL_RESULT,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{analysis_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{analysis_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),

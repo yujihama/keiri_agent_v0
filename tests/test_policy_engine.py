@@ -313,7 +313,7 @@ class TestPolicyEnforceBlock:
             }
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["policy_result"]["success"] is True
         assert result["policy_result"]["policies_evaluated"] == 1
@@ -344,7 +344,7 @@ class TestPolicyEnforceBlock:
             }
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["policy_result"]["success"] is True  # 実行は成功
         assert result["policy_result"]["total_violations"] == 2  # 2つの違反
@@ -379,7 +379,7 @@ class TestPolicyEnforceBlock:
         
         # 高重要度以上の違反で停止することを確認
         with pytest.raises(BlockExecutionError) as exc_info:
-            block.execute(inputs, block_context)
+            block.run(block_context, inputs)
         
         assert "ポリシー違反により処理を停止" in str(exc_info.value)
     
@@ -437,7 +437,7 @@ class TestPolicyEnforceBlock:
             }
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         # コンプライアンスポリシーのみが評価されることを確認
         assert result["policy_result"]["policies_evaluated"] == 1
@@ -459,7 +459,7 @@ class TestPolicyEnforceBlock:
             }
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["policy_result"]["success"] is True
         assert result["policy_result"]["policies_evaluated"] == 0
@@ -619,7 +619,7 @@ class TestPolicyIntegration:
                 "policy_config": {"policy_type": "compliance"}
             }
             
-            result = policy_block.execute(inputs, block_context)
+            result = policy_block.run(block_context, inputs)
             
             # 結果検証
             assert result["policy_result"]["success"] is True

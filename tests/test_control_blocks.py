@@ -36,7 +36,7 @@ class TestApprovalBlock:
             "approval_policy": approval_policy
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["approval_result"]["success"] is True
         assert result["approval_result"]["level_required"] == 1
@@ -56,7 +56,7 @@ class TestApprovalBlock:
             "approval_policy": approval_policy
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["approval_result"]["success"] is True
         assert result["approval_result"]["level_required"] == 2
@@ -78,7 +78,7 @@ class TestApprovalBlock:
             "current_approvals": []  # 承認なし
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         # エスカレーション発生を確認
         assert result["approval_result"]["escalation_required"] is True
@@ -100,7 +100,7 @@ class TestApprovalBlock:
             # 48時間後の時刻を設定
             mock_datetime.now.return_value = datetime.now() + timedelta(hours=49)
             
-            result = block.execute(inputs, block_context)
+            result = block.run(block_context, inputs)
             
             assert result["approval_result"]["timeout_occurred"] is True
     
@@ -123,7 +123,7 @@ class TestApprovalBlock:
         }
         
         with pytest.raises(BlockExecutionError):
-            block.execute(inputs, block_context)
+            block.run(block_context, inputs)
 
 
 class TestSodCheckBlock:
@@ -152,7 +152,7 @@ class TestSodCheckBlock:
             "sod_matrix": sod_matrix
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sod_result"]["compliant"] is True
         assert len(result["sod_result"]["violations"]) == 0
@@ -174,7 +174,7 @@ class TestSodCheckBlock:
             "sod_matrix": sod_matrix
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sod_result"]["compliant"] is False
         assert len(result["sod_result"]["violations"]) > 0
@@ -199,7 +199,7 @@ class TestSodCheckBlock:
             "user_roles": {"admin_user": ["admin"]}
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         # 管理者例外により違反なしとして処理
         assert result["sod_result"]["compliant"] is True
@@ -236,7 +236,7 @@ class TestSodCheckBlock:
             "sod_matrix": complex_sod_matrix
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sod_result"]["compliant"] is False
         assert len(result["sod_result"]["violations"]) == 2  # 2つの違反
@@ -264,7 +264,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sampling_result"]["method_used"] == "statistical"
         assert result["sampling_result"]["sample_size"] == 25
@@ -285,7 +285,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sampling_result"]["method_used"] == "risk_based"
         assert len(result["selected_items"]) <= 30
@@ -314,7 +314,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sampling_result"]["method_used"] == "systematic"
         assert len(result["selected_items"]) == 20
@@ -336,7 +336,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sampling_result"]["method_used"] == "random"
         assert len(result["selected_items"]) == 15
@@ -359,7 +359,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         # 自動計算されたサンプルサイズが適切な範囲にあることを確認
         sample_size = result["sampling_result"]["sample_size"]
@@ -379,7 +379,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         stats = result["sampling_statistics"]
         
@@ -412,7 +412,7 @@ class TestSamplingBlock:
             "sampling_parameters": sampling_parameters
         }
         
-        result = block.execute(inputs, block_context)
+        result = block.run(block_context, inputs)
         
         assert result["sampling_result"]["sample_size"] == 0
         assert len(result["selected_items"]) == 0
@@ -431,7 +431,7 @@ class TestSamplingBlock:
         }
         
         with pytest.raises(BlockExecutionError):
-            block.execute(inputs, block_context)
+            block.run(block_context, inputs)
 
 
 class TestControlBlocksIntegration:
@@ -450,7 +450,7 @@ class TestControlBlocksIntegration:
             "approval_policy": approval_policy
         }
         
-        approval_result = approval_block.execute(approval_inputs, block_context)
+        approval_result = approval_block.run(approval_inputs, block_context)
         
         # 2. 承認結果を職務分掌チェックに連携
         transaction_data = {
@@ -466,7 +466,7 @@ class TestControlBlocksIntegration:
             "sod_matrix": sod_matrix
         }
         
-        sod_result = sod_block.execute(sod_inputs, block_context)
+        sod_result = sod_block.run(sod_inputs, block_context)
         
         # 統合結果の検証
         assert approval_result["approval_result"]["success"] is True
@@ -486,7 +486,7 @@ class TestControlBlocksIntegration:
             "sampling_parameters": sampling_parameters
         }
         
-        result = sampling_block.execute(inputs, block_context)
+        result = sampling_block.run(block_context, inputs)
         
         # 証跡ファイルが生成されていることを確認
         assert len(result["evidence_files"]) > 0
@@ -512,7 +512,7 @@ class TestControlBlocksIntegration:
             "approval_policy": approval_policy
         }
         
-        result = approval_block.execute(inputs, block_context)
+        result = approval_block.run(block_context, inputs)
         
         # 監査証跡の確認
         evidence_files = result["evidence_files"]

@@ -73,7 +73,7 @@ class SelectedItem(BaseModel):
 class SamplingBlock(ProcessingBlock):
     """サンプリングブロック"""
     
-    def execute(self, inputs: Dict[str, Any], context: BlockContext) -> Dict[str, Any]:
+    def run(self, ctx: BlockContext, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """サンプリングの実行"""
         try:
             # 入力データの検証
@@ -403,9 +403,9 @@ class SamplingBlock(ProcessingBlock):
         """従来方式での証跡ファイル生成"""
         evidence_files = []
         
-        if context.workspace:
+        if ctx.workspace:
             # サンプリング結果ファイル
-            result_file = os.path.join(context.workspace, f"sampling_result_{context.run_id}.json")
+            result_file = os.path.join(ctx.workspace, f"sampling_result_{ctx.run_id}.json")
             with open(result_file, 'w', encoding='utf-8') as f:
                 result_data = {
                     'sampling_result': sampling_result,
@@ -421,7 +421,7 @@ class SamplingBlock(ProcessingBlock):
             evidence_files.append(result_file)
             
             # サンプリングパラメータファイル
-            params_file = os.path.join(context.workspace, f"sampling_parameters_{context.run_id}.json")
+            params_file = os.path.join(ctx.workspace, f"sampling_parameters_{ctx.run_id}.json")
             with open(params_file, 'w', encoding='utf-8') as f:
                 json.dump(parameters.dict(), f, ensure_ascii=False, indent=2)
             evidence_files.append(params_file)
@@ -440,9 +440,9 @@ class SamplingBlock(ProcessingBlock):
             evidence_id=result_evidence_id,
             evidence_type=EvidenceType.CONTROL_RESULT,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{result_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{result_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),
@@ -467,9 +467,9 @@ class SamplingBlock(ProcessingBlock):
             evidence_id=params_evidence_id,
             evidence_type=EvidenceType.CONTROL_RESULT,
             block_id=self.__class__.__name__,
-            run_id=context.run_id,
+            run_id=ctx.run_id,
             timestamp=datetime.now(),
-            file_path=f"evidence/control/{context.run_id}/{params_evidence_id}.json",
+            file_path=f"evidence/control/{ctx.run_id}/{params_evidence_id}.json",
             file_hash="",
             file_size=0,
             retention_until=datetime.now() + timedelta(days=2555),
