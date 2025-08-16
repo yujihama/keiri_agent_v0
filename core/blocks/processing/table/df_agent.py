@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple, Iterable
 import os
 import json
 import re
+import pandas as pd
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.plan.logger import export_log
@@ -428,12 +429,14 @@ class PandasDataframeAgentBlock(ProcessingBlock):
             # Older signature without callbacks
             llm, model_label = build_chat_llm(temperature=temperature)
 
-        # pandas agent 準備（古/新 API 併用対応）
-        allow_dangerous_code = True
-        verbose = True
-
         # DataFrame のみ取り出し順序を保って渡す
-        dfs_ordered = [df for _, df in pairs]
+        dfs_ordered = []
+        for _, df in pairs:
+            df_converted = df.copy()
+            for col in df_converted.columns:
+                if pd.api.types.is_numeric_dtype(df_converted[col]) or pd.api.types.is_datetime64_any_dtype(df_converted[col]):
+                    df_converted[col] = df_converted[col].astype(str)
+            dfs_ordered.append(df_converted)
         print(f"dfs_ordered_shape:{[dfs_ordered[i].shape for i in range(len(dfs_ordered))]}")
 
         # create_pandas_dataframe_agent の import 位置は LangChain のバージョンで異なる
@@ -465,7 +468,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                     raise wrap_exception(e, ErrorCode.CONFIG_MISSING, inputs)
 
         # 受け入れ可能なキーワード引数はバージョン差があるため、動的に付与
-        prompt_prefix = "Assume 'df' is the dataframe provided and already loaded in the environment."
+        prompt_prefix = "Assume 'df1','df2' is the dataframe provided and already loaded in the environment.最初にPythonAstREPLToolでhead()を実行して各dfにアクセス可能か確認すること。"
         agent_kwargs: Dict[str, Any] = {"verbose": True, "allow_dangerous_code": True, "prefix": prompt_prefix}
         # Try attach callbacks at creation time (version-dependent)
         agent = None

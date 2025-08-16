@@ -1,0 +1,34 @@
+id: transforms.join
+version: 0.1.0
+entrypoint: blocks/processing/transforms/join.py:JoinBlock
+inputs:
+  left:
+    type: array
+    description: '左側配列（例: 退職者リスト）'
+  right:
+    type: array
+    description: '右側配列（例: 元帳行）'
+  left_key:
+    type: string
+    description: '左側の照合キー（例: "退職手当（見込）（円）"）'
+  right_key:
+    type: string
+    description: '右側の照合キー（例: "借方"）'
+  strategy:
+    type: string
+    enum: ["first", "all"]
+    description: 'マッチが複数ある場合の扱い。first=最初の1件のみ、all=全件'
+  select:
+    type: object
+    description: '出力列定義。{ 出力列名: "left.社員番号" | "right.伝票日付" } の形式'
+outputs:
+  rows:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  2つの配列をキー一致で結合し、選択したフィールドを平坦な行配列として出力する決定論的ブロック。
+  数値文字列は自動的に数値として比較します（例: "177,000" と 177000 を同一視）。
+
+

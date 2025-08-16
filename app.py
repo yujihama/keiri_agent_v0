@@ -9,14 +9,7 @@ import os
 import yaml
 from contextlib import contextmanager
 import tempfile
-
-# Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # dotenv is optional for the main app
-
+from dotenv import load_dotenv
 import streamlit as st
 
 from core.blocks.registry import BlockRegistry
@@ -25,6 +18,7 @@ from core.plan.validator import validate_plan, dry_run_plan
 from core.plan.design_engine import generate_plan, DesignEngineOptions
 from core.plan.runner import PlanRunner
 
+load_dotenv()
 
 def list_designs() -> List[Path]:
     designs_dir = (Path.cwd() / "designs").resolve()
@@ -64,12 +58,15 @@ def _clear_ui_widget_state_for_plan(plan) -> None:
 
     keys_to_remove = []
     for key in list(st.session_state.keys()):
+        # ノードごとのウィジェットキー群
         for nid in node_ids:
             for pref in widget_prefixes:
                 if key.startswith(f"{pref}{nid}"):
                     keys_to_remove.append(key)
                     break
-            # 早期breakはしない（複数prefix一致は稀だが安全側）
+        # inquire用チャット履歴（ノード単位）
+        if key.startswith(f"chat_history::{plan.id}::"):
+            keys_to_remove.append(key)
     for k in keys_to_remove:
         try:
             del st.session_state[k]
@@ -100,6 +97,49 @@ def _disable_headless_for_ui():
 
 def _now_tmp_yaml_path() -> Path:
     return Path(tempfile.mkstemp(prefix=".tmp_plan_", suffix=".yaml", dir=str(Path.cwd()))[1])
+
+
+@st.fragment
+def render_workbook_downloads(workbooks: list[dict], output_method: str, plan_id: str) -> None:
+    for idx, item in enumerate(workbooks):
+        wb_dict = item["value"]
+        label = item["label"]
+        wb_bytes = wb_dict.get("bytes")
+        fname = (wb_dict.get("name") or f"workbook_updated_{idx+1}.xlsx") if isinstance(wb_dict.get("name"), str) else f"workbook_updated_{idx+1}.xlsx"
+        if isinstance(wb_bytes, (bytes, bytearray)):
+            if output_method in ("download", "both"):
+                st.download_button(
+                    f"更新済みExcelをダウンロード: {label}",
+                    data=wb_bytes,
+                    file_name=fname,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_wb_{idx}",
+                )
+            if output_method in ("save_runs", "both"):
+                if st.button(f"runs フォルダに保存: {label}", key=f"save_wb_{idx}"):
+                    out_dir = Path("runs") / plan_id
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    run_id = st.session_state.get("last_run_id") or datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+                    out_path = out_dir / f"{run_id}_updated_{idx+1}.xlsx"
+                    out_path.write_bytes(wb_bytes)  # type: ignore[arg-type]
+                    st.success(f"保存しました: {out_path}")
+
+
+@st.fragment
+def render_workbook_b64_downloads(b64_items: list[tuple[str, str]]) -> None:
+    for idx, (label, b64) in enumerate(b64_items):
+        st.download_button(
+            f"更新済みExcelをダウンロード (b64): {label}",
+            data=base64.b64decode(b64),
+            file_name=f"workbook_updated_{idx+1}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_wb_b64_{idx}",
+        )
+
+
+@st.fragment
+def render_jsonl_download_button(lines: list[str], file_name: str) -> None:
+    st.download_button("JSONL ダウンロード", data="\n".join(lines), file_name=file_name, mime="application/jsonl")
 
 
 def validate_and_dryrun(yaml_text: str, registry: BlockRegistry, *, do_dryrun: bool = True):
@@ -383,14 +423,14 @@ def main():
                 html0 = generate_flow_html(plan_preview_for_dag, states0, include_loop_nodes=False)
                 dag_area.markdown(html0, unsafe_allow_html=True)
         except Exception:
+            st.warning("フロー図の表示に失敗しました。")
             pass
 
         st.divider()
 
         # 実行前に vars を編集可能にする
         edited_vars = {}
-        default_hitl = True
-        runner = PlanRunner(registry=registry, default_ui_hitl=default_hitl)
+        runner = PlanRunner(registry=registry, default_ui_hitl=True)
 
         # 実行/再開クリック時に UI 表示を一時抑止し、次の描画で実行を開始するためのフラグを設定
         def _on_run_click() -> None:
@@ -400,6 +440,9 @@ def main():
         # 実行結果クリアボタン
         col_actions1, col_actions2 = st.columns([1,1])
         with col_actions1:
+            # 実行ボタン（クリック時に実行要求フラグを立てる）
+            st.button("実行/再開", on_click=_on_run_click)
+        with col_actions2:
             if st.button("実行結果をクリア"):
                 # runs/<plan_id> の state.json を削除
                 try:
@@ -432,10 +475,7 @@ def main():
                     pass
                 st.success("実行結果をクリアしました。『実行/再開』で最初からやり直せます。")
                 st.rerun()
-        with col_actions2:
-            # 実行ボタン（クリック時に実行要求フラグを立てる）
-            st.button("実行/再開", on_click=_on_run_click)
-
+        
         # 保留UIの検出と実際のUIブロック描画（手動run_id優先、なければ最新を自動検出）
         try:
             plan_for_pending = load_plan(plan_path2)
@@ -458,7 +498,8 @@ def main():
                             pending = cand
                             pending_run_id = auto_rid
                     except Exception:
-                        pass
+                        st.warning("pending_uiの取得でエラーになりました。")
+
             # フォールバック: 最新の未提出 pending を自動検出
             if pending is None and state_dir.exists():
                 files = sorted(state_dir.glob("*.state.json"), reverse=True)
@@ -503,8 +544,8 @@ def main():
                                 _states[str(nid)] = "success"
                         html = generate_flow_html(plan_for_pending, _states, include_loop_nodes=False)
                         dag_area.markdown(html, unsafe_allow_html=True)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"フロー図の表示に失敗しました。{e}")
                     # セッション再開IDを記憶（実行/再開ボタンで自動利用）
                     st.session_state["auto_resume_run_id"] = pending_run_id
                     # plan/ノード識別子を UI セッションステートに渡す
@@ -779,28 +820,7 @@ def main():
 
                 # 収集できたすべてのワークブックに対してボタンを表示
                 if workbooks:
-                    for idx, item in enumerate(workbooks):
-                        wb_dict = item["value"]
-                        label = item["label"]
-                        wb_bytes = wb_dict.get("bytes")
-                        fname = (wb_dict.get("name") or f"workbook_updated_{idx+1}.xlsx") if isinstance(wb_dict.get("name"), str) else f"workbook_updated_{idx+1}.xlsx"
-                        if isinstance(wb_bytes, (bytes, bytearray)):
-                            if output_method in ("download", "both"):
-                                st.download_button(
-                                    f"更新済みExcelをダウンロード: {label}",
-                                    data=wb_bytes,
-                                    file_name=fname,
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    key=f"dl_wb_{idx}",
-                                )
-                            if output_method in ("save_runs", "both"):
-                                if st.button(f"runs フォルダに保存: {label}", key=f"save_wb_{idx}"):
-                                    out_dir = Path("runs") / plan.id
-                                    out_dir.mkdir(parents=True, exist_ok=True)
-                                    run_id = st.session_state.get("last_run_id") or datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-                                    out_path = out_dir / f"{run_id}_updated_{idx+1}.xlsx"
-                                    out_path.write_bytes(wb_bytes)  # type: ignore[arg-type]
-                                    st.success(f"保存しました: {out_path}")
+                    render_workbook_downloads(workbooks, output_method, plan.id)
             except Exception as _dl_err:
                 st.warning(f"Excel出力UIの構築でエラー: {_dl_err}")
             # 代替: base64エンコードの別名もサポート
@@ -844,15 +864,7 @@ def main():
                                 seen_vals.add(v_any)
 
                     if b64_items and output_method in ("download", "both"):
-                        import base64 as _b64
-                        for idx, (label, b64) in enumerate(b64_items):
-                            st.download_button(
-                                f"更新済みExcelをダウンロード (b64): {label}",
-                                data=_b64.b64decode(b64),
-                                file_name=f"workbook_updated_{idx+1}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key=f"dl_wb_b64_{idx}",
-                            )
+                        render_workbook_b64_downloads(b64_items)
             except Exception:
                 pass
 
@@ -997,7 +1009,7 @@ def main():
                         if not filtered and lines:
                             st.info("イベントの解析に失敗したため、Rawログを表示します。")
                             st.text_area("Raw JSONL", value="\n".join(lines), height=200)
-                        st.download_button("JSONL ダウンロード", data="\n".join(lines), file_name=file.name, mime="application/jsonl")
+                        render_jsonl_download_button(lines, file.name)
 
 
 if __name__ == "__main__":
