@@ -8,9 +8,13 @@
 - `core/`: ランタイム中核
   - `blocks/`: ブロック実装
   - `plan/`: Plan のモデル/ローダ/バリデータ/ランナー/設計エンジン 等
+-  - `ui/`: UIブロックおよびセッションステート等のドメイン側ユーティリティ（プレゼン層に依存しない）
 - `designs/`: 業務 Plan（YAML）
 - `docs/`: ドキュメント集（本 README からリンク）
 - `headless/`: CLI ランナーや既定の設定/出力場所
+- `ui/`: Streamlit を用いたプレゼンテーション層（画面タブ・ビュー向けユーティリティ）
+  - `tabs/`: 業務設計/実施/ログ 各タブ
+  - その他: `flow_viz.py`、`pending_ui.py`、`workbook_artifacts.py` などビュー向けユーティリティ
 - `tests/`: pytest テスト一式
 - `runs/`: 実行ログ(JSONL)や UI 状態ファイルの既定保存先
 
@@ -51,5 +55,40 @@ python headless/cli_runner.py designs/retirement_benefit_q1_2025.yaml --headless
 
 - コーディング規約や内部 API の詳細は `docs/core_plan.md` と各モジュールの docstring を参照してください。
 - 不具合や提案は Issue / PR にて歓迎します。
+
+### 重要: UI 周辺の設計方針（今回の改修の意図）
+
+1) レイヤ分離（可読性/保守性の担保）
+- `core/ui/*`: ドメイン層（ブロック/ランナー側から利用され得るユーティリティ）。Streamlit 等のプレゼンテーション技術に依存しないこと。
+- `ui/*`: プレゼン層（Streamlit 画面）。ドメイン層へは依存するが、逆依存は作らない。
+
+2) タブごとの責務分離（肥大化の回避）
+- 画面は `ui/tabs/*` に分割し、`app.py` はタブ切替と DI のみを担う。
+
+3) 例外とログの方針統一（ユーザー通知と内部記録の両立）
+- ログは `ui.logging`（実体は `core/ui/logging.py` を再エクスポート）を経由。
+- 予期可能な軽微例外は `ulog.warn(..., user=False)` で記録のみ。ユーザーへの過剰通知を避ける。
+- 回復にユーザー操作が必要/致命的な場合は `ulog.warn/error(..., user=True)` で UI へ通知。
+- ログは JSON 構造化・回転ファイル＋コンソール。`plan_id`/`run_id`/`node_id`/`tag` を ContextVar で付加。
+- 初期化は `app.py` の `ulog.configure_logging()` に集約。
+
+4) フロー図描画は単一プレースホルダに上書き
+- 実行開始時に新規 `st.empty()` を作らず、既存の `dag_area` を共有して二重描画を防止。
+
+5) セッションキーの集中管理
+- `ui/state_keys.py` の `SessionKeys` を介して参照。生文字列キーの散在を禁止。
+
+6) UIウィジェット状態のクリア
+- `ui/widget_utils.clear_ui_widget_state_for_plan(plan)` を使用し、UIブロックに紐づくキーを一括削除。
+
+7) 成果物抽出の単一実装
+- Excel成果物の抽出/表示は `ui/workbook_artifacts.py` の関数群を使用（Planのoutエイリアス優先、重複排除、b64対応）。
+
+8) 改修時の遵守事項（PR チェックリスト）
+- `core/ui` → `ui` の依存方向を逆転させない（core から ui を参照しない）。
+- 新規例外ハンドリングは `ulog` を経由し、UI表示フラグの意図を明示。
+- フロー図の描画先は既存の placeholder を再利用すること。
+- セッションキーは必ず `SessionKeys` の定義を経由。
+- 既存の共通関数を再実装しない（`ui/*_utils.py` に集約）。
 
 

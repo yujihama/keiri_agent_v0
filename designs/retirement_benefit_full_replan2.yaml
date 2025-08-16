@@ -7,7 +7,7 @@ policy:
   on_error: continue
   retries: 0
 ui:
-  layout: [upload_files, select_salary_format, select_quarter]
+  layout: [upload_files,select_quarter] # select_salary_format, 
 graph:
   # -1) 対象ファイルのアップロード（CSV/Excel）
   - id: upload_files
@@ -22,16 +22,16 @@ graph:
     out:
       collected_data: uploaded
   # 0.5) 給与明細CSVの形式選択（縦持ち or 横持ちピボット）
-  - id: select_salary_format
-    description: 給与明細のCSV形式を選択
-    block: ui.interactive_input
-    in:
-      mode: inquire
-      message: "給与明細CSVの形式を選択してください"
-      requirements:
-        - { id: salary_format, type: select, label: "給与明細形式", options: ["normal","pivot"], default: "normal", required: true }
-    out:
-      collected_data: format
+  # - id: select_salary_format
+  #   description: 給与明細のCSV形式を選択
+  #   block: ui.interactive_input
+  #   in:
+  #     mode: inquire
+  #     message: "給与明細CSVの形式を選択してください"
+  #     requirements:
+  #       - { id: salary_format, type: select, label: "給与明細形式", options: ["normal","pivot"], default: "normal", required: true }
+  #   out:
+  #     collected_data: format
   # 0) 四半期の入力（UI）
   - id: select_quarter
     description: 会計年度と四半期を入力
@@ -96,8 +96,8 @@ graph:
       value_name: "value"
     out:
       rows: salary_unpivot_rows
-    when:
-      expr: ${select_salary_format.format.salary_format} == "pivot"
+    # when:
+    #   expr: ${select_salary_format.format.salary_format} == "pivot"
 
   - id: pivot_salary_to_rows
     description: 社員番号ごとの行に復元
@@ -111,8 +111,8 @@ graph:
       flatten_multiindex: true
     out:
       rows: salary_rows_raw
-    when:
-      expr: ${select_salary_format.format.salary_format} == "pivot"
+    # when:
+    #   expr: ${select_salary_format.format.salary_format} == "pivot"
   # 1-e) ラベル行（1行目）を正規ヘッダへ割当（case-insensitive rename）
   - id: rename_salary_fields
     description: ラベル行の日本語項目名を正規キーに揃える
