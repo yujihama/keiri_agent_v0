@@ -1,0 +1,19 @@
+id: evidence.search
+version: 0.1.0
+entrypoint: blocks/processing/evidence/search.py:EvidenceSearchBlock
+inputs:
+  search_criteria:
+    type: object
+    description: |
+      検索条件。例: { name_contains: 'invoice', ext: '.pdf', min_size: 1000, max_size: 10485760 }
+  compute_hash:
+    type: boolean
+    description: ハッシュ計算を実施（重い処理のためデフォルトfalse）
+outputs:
+  search_results:
+    type: array
+  total_count:
+    type: integer
+requirements: []
+description: |
+  Evidence Vault 内の証跡を検索するブロック。名称・拡張子・サイズ範囲などの基本条件で抽出する。
