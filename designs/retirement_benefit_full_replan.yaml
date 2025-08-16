@@ -7,7 +7,7 @@ policy:
   on_error: continue
   retries: 0
 ui:
-  layout: [upload_files, select_quarter]
+  layout: [upload_files, select_salary_format, select_quarter]
 graph:
   # -1) 対象ファイルのアップロード（CSV/Excel）
   - id: upload_files
@@ -21,6 +21,17 @@ graph:
         - { id: workbook, type: file, label: "退職給付ワークブック.xlsx", required: true, description: "テンプレート/直前期のExcelをアップロード", accept: ".xlsx" }
     out:
       collected_data: uploaded
+  # 0.5) 給与明細CSVの形式選択（縦持ち or 横持ちピボット）
+  - id: select_salary_format
+    description: 給与明細のCSV形式を選択
+    block: ui.interactive_input
+    in:
+      mode: inquire
+      message: "給与明細CSVの形式を選択してください"
+      requirements:
+        - { id: salary_format, type: select, label: "給与明細形式", options: ["normal","pivot"], default: "normal", required: true }
+    out:
+      collected_data: format
   # 0) 四半期の入力（UI）
   - id: select_quarter
     description: 会計年度と四半期を入力
@@ -50,8 +61,9 @@ graph:
       quarter_label: quarter_label
 
   # 1) 給与明細表・退職給付引当元帳のCSV読み込み
+  # 1-a) 縦持ち（通常）CSV の読み込み
   - id: read_salary
-    description: 給与明細CSVを読み込み
+    description: 給与明細CSVを読み込み（縦持ち）
     block: file.read_csv
     in:
       bytes: ${upload_files.uploaded.salary_csv}
@@ -59,7 +71,80 @@ graph:
       delimiter: ","
       has_header: true
     out:
-      rows: salary_rows
+      rows: salary_rows_raw
+
+  # 1-b) 横持ち（ピボット）CSV の読み込み（Shift_JIS想定）
+  - id: read_salary_pivot
+    description: 給与明細CSVを読み込み（横持ちピボット）
+    block: file.read_csv
+    in:
+      bytes: ${upload_files.uploaded.salary_csv}
+      encoding: cp932
+      delimiter: ","
+      has_header: true
+    out:
+      rows: salary_pivot_rows_raw
+
+  # 1-c) 横持ち→縦持ちへ変換（unpivot -> pivot）
+  - id: unpivot_salary
+    description: ピボット表をアンピボット
+    block: table.unpivot
+    in:
+      rows: ${read_salary_pivot.salary_pivot_rows_raw}
+      id_vars: ""
+      var_name: "氏名"
+      value_name: "value"
+    out:
+      rows: salary_unpivot_rows
+    when:
+      expr: ${select_salary_format.format.salary_format} == "pivot"
+
+  - id: pivot_salary_to_rows
+    description: 社員番号ごとの行に復元
+    block: table.pivot
+    in:
+      rows: ${unpivot_salary.salary_unpivot_rows}
+      index: "氏名"
+      columns: ""
+      values: "value"
+      aggfunc: first
+      flatten_multiindex: true
+    out:
+      rows: salary_rows_raw
+    when:
+      expr: ${select_salary_format.format.salary_format} == "pivot"
+  # 1-e) ラベル行（1行目）を正規ヘッダへ割当（case-insensitive rename）
+  - id: rename_salary_fields
+    description: ラベル行の日本語項目名を正規キーに揃える
+    block: transforms.rename_fields
+    in:
+      items: ${combine_salary_rows.salary_rows}
+      rename:
+        "": 社員番号
+        支給日: 支給日
+        生年月日: 生年月日
+        役職: 役職
+        採用年月日: 採用年月日
+        退職年月日: 退職年月日
+        基本給: 基本給
+        諸手当: 諸手当
+        総支給額: 総支給額
+        控除額: 控除額
+        差引支給額: 差引支給額
+    out:
+      rows: salary_rows_normalized
+
+
+  # 1-d) 入力形式に応じて正規化（どちらかの rows を採用）
+  - id: combine_salary_rows
+    description: 給与明細行の統一
+    block: transforms.flatten_items
+    in:
+      results_list:
+        - { items: "${read_salary.salary_rows_raw}" }
+        - { items: "${pivot_salary_to_rows.salary_rows_raw}" }
+    out:
+      items: salary_rows
 
   - id: read_ledger
     description: 退職給付金勘定元帳CSVを読み込み
@@ -77,7 +162,7 @@ graph:
     description: 当四半期に入社した社員を抽出
     block: transforms.filter
     in:
-      items: ${read_salary.salary_rows}
+      items: ${rename_salary_fields.salary_rows_normalized}
       conditions:
         - { field: "採用年月日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
     out:
@@ -88,7 +173,7 @@ graph:
     description: 当四半期に退職した社員を抽出
     block: transforms.filter
     in:
-      items: ${read_salary.salary_rows}
+      items: ${rename_salary_fields.salary_rows_normalized}
       conditions:
         - { field: "退職年月日", operator: "between", value: "${compute_q.period.start}", value2: "${compute_q.period.end}" }
     out:

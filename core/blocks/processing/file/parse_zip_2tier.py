@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 from io import BytesIO
 import zipfile
 import hashlib
+import base64
+import mimetypes
 
 from core.plan.text_extractor import extract_texts
 
@@ -70,16 +72,27 @@ class ParseZip2TierBlock(ProcessingBlock):
                     except Exception:
                         excerpt = ""
 
-                    files_info.append(
-                        {
-                            "path": path,
-                            "name": name,
-                            "size": size,
-                            "ext": ext,
-                            "sha1": sha1,
-                            "text_excerpt": excerpt,
-                        }
-                    )
+                    # Infer mime type and attach base64 for images/PDF for downstream multimodal/evidence use
+                    mime_type, _ = mimetypes.guess_type(name)
+                    mime_type = mime_type or "application/octet-stream"
+
+                    file_entry: Dict[str, Any] = {
+                        "path": path,
+                        "name": name,
+                        "size": size,
+                        "ext": ext,
+                        "sha1": sha1,
+                        "text_excerpt": excerpt,
+                        "mime_type": mime_type,
+                    }
+
+                    try:
+                        if mime_type in ("image/png", "image/jpeg", "application/pdf") and data:
+                            file_entry["base64"] = base64.b64encode(data).decode("ascii")
+                    except Exception:
+                        pass
+
+                    files_info.append(file_entry)
         except zipfile.BadZipFile:
             # Return empty evidence on invalid zip
             return {"evidence": {"raw_size": len(zip_bytes), "total_files": 0, "files": [], "by_dir": {}}}

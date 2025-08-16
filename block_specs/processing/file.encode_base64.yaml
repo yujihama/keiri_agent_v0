@@ -1,0 +1,28 @@
+id: file.encode_base64
+version: 0.1.0
+entrypoint: blocks/processing/file/encode_base64.py:EncodeBase64Block
+inputs:
+  data:
+    type: any
+    description: "bytes もしくはファイルパス文字列。パスが存在すればファイルを読み込みます。"
+  path:
+    type: string
+    description: "明示的なファイルパス。data が未指定またはbytesでない場合に使用。"
+  name:
+    type: string
+    description: "出力名。未指定時はパスや既定から推定。"
+  mime_type:
+    type: string
+    description: "MIME。未指定時はファイル名から推定。"
+  as_data_uri:
+    type: boolean
+    description: "data URI も併せて返すか。既定は false。"
+outputs:
+  encoded:
+    type: object
+    description: "{ name, mime_type, size, base64, data_uri? }"
+requirements: []
+description: |
+  任意のファイル/バイト列を Base64 へエンコードします。画像（png/jpeg等）にも利用可能。
+
+

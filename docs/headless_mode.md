@@ -19,7 +19,7 @@
    - Azure OpenAI 最小:
      - `AZURE_OPENAI_API_KEY=<your azure key>`
      - `AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/`
-     - `AZURE_OPENAI_DEPLOYMENT=<deployment name>`（例: `gpt-4o-mini`）
+     - `AZURE_OPENAI_DEPLOYMENT=<deployment name>`（例: `gpt-4.1`）
      - 任意: `AZURE_OPENAI_API_VERSION`（既定 `2024-02-15-preview`）
    - 明示的にプロバイダーを固定したい場合: `KEIRI_AGENT_LLM_PROVIDER=azure` または `openai`
    - モデル名/デプロイ名: `KEIRI_AGENT_LLM_MODEL`（OpenAI では model、Azure では deployment 名として利用）

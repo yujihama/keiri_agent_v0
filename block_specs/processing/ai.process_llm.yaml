@@ -6,7 +6,9 @@ inputs:
     type: object
     description: |
       LLM へ渡す根拠データ。以下のキーを受け付けます:
-        - files: [{ name, ext, size, text_excerpt }] の配列（既存仕様）
+        - files: 以下の形式の配列
+            - テキスト/文書: { name, ext, size, text_excerpt }
+            - 画像（任意）: { name, mime_type: image/png|image/jpeg, base64 | bytes }
         - rows: list[object] または { rows: list[object] }
         - 任意キー: list[object] または { results: list[object] } を含む場合、表データとして扱われます
   instruction:
@@ -28,6 +30,12 @@ inputs:
     description: "表データの先頭取り込み行数（既定: 環境変数 KEIRI_AGENT_PER_TABLE_ROWS または 200）。"
   group_key:
     type: string
+  allow_images:
+    type: boolean
+    description: "画像（image/png,image/jpeg）をマルチモーダルとして添付するか（既定: true）。"
+  max_images:
+    type: integer
+    description: "添付する画像の最大枚数（既定: 4）。"
 outputs:
   results:
     type: object

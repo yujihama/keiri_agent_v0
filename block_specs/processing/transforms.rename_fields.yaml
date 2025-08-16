@@ -1,0 +1,37 @@
+id: transforms.rename_fields
+version: 0.1.0
+entrypoint: blocks/processing/transforms/rename_fields.py:RenameFieldsBlock
+inputs:
+  items:
+    type: array
+    description: list[object] 形式の行配列
+  rename:
+    type: object
+    description: "旧名→新名のマッピング（{ old: new }）"
+  rename_rows:
+    type: array
+    description: "1要素の行配列からマッピングを生成（先頭要素の { old: new } を使用）"
+  mode:
+    type: string
+    description: 'rename動作: move|copy（既定: move）。copyの場合は元キーを残したまま新キーへ複製'
+  drop:
+    type: array
+    description: 追加で削除するキーの配列（任意）
+outputs:
+  rows:
+    type: array
+    description: 変換済みの行配列
+  summary:
+    type: object
+    description: 行数とリネーム数
+requirements: []
+tags:
+  - transforms
+  - rename
+description: |
+  行配列に対して、キー名のリネーム（および任意のコピー/削除）を行う汎用ブロック。
+  - rename: { old: new } で指定
+  - mode: move で移動、copy で複製
+  - drop: 削除したいキー名の配列
+
+

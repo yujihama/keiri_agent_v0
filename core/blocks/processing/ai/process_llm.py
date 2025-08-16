@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Type
 import os
 import json
+import base64
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.errors import BlockError, BlockException, ErrorCode, create_input_error, create_external_error, wrap_exception
@@ -133,6 +134,13 @@ class ProcessLLMBlock(ProcessingBlock):
         except Exception:
             per_table_rows = 200
 
+        # マルチモーダル（画像）設定
+        allow_images: bool = bool(inputs.get("allow_images", True))
+        try:
+            max_images: int = int(inputs.get("max_images", 4))
+        except Exception:
+            max_images = 4
+
         # 動的出力モデル（スキーマ準拠）を生成
         DynamicOutModel = _build_output_model_from_schema(output_schema)
 
@@ -186,9 +194,13 @@ class ProcessLLMBlock(ProcessingBlock):
             ))
 
         try:
-            # 全ファイルを対象に、必要最小限のメタデータ + 抜粋を整形
+            # 全ファイルを対象に、必要最小限のメタデータ + 抜粋を整形（テキスト/文書向け）
             docs: List[Dict[str, Any]] = []
+            # 画像（マルチモーダル用）を抽出
+            image_data_urls: List[str] = []
+
             for f in files:
+                # 文書系のメタ
                 docs.append(
                     {
                         "name": f.get("name"),
@@ -197,6 +209,39 @@ class ProcessLLMBlock(ProcessingBlock):
                         "text_excerpt": (f.get("text_excerpt") or "")[:per_file_chars],
                     }
                 )
+
+                # 画像候補の抽出
+                if allow_images and len(image_data_urls) < max_images:
+                    mime = str(f.get("mime_type") or "").lower()
+                    ext = str(f.get("ext") or "").lower()
+                    is_image = False
+                    if mime.startswith("image/"):
+                        is_image = mime in ("image/png", "image/jpeg")
+                    else:
+                        if ext in (".png", "png"):
+                            mime = "image/png"
+                            is_image = True
+                        elif ext in (".jpg", "jpg", ".jpeg", "jpeg"):
+                            mime = "image/jpeg"
+                            is_image = True
+
+                    if is_image:
+                        b64_val: Optional[str] = None
+                        if isinstance(f.get("base64"), str):
+                            b64_val = f.get("base64")  # type: ignore[assignment]
+                        elif isinstance(f.get("bytes"), (bytes, bytearray)):
+                            try:
+                                b64_val = base64.b64encode(bytes(f.get("bytes"))).decode("ascii")  # type: ignore[arg-type]
+                            except Exception:
+                                b64_val = None
+                        elif isinstance(f.get("bytes"), dict):
+                            # artifacts JSON 経由の b64bytes 形式に対処
+                            bobj = f.get("bytes")
+                            if bobj and bobj.get("__type") == "b64bytes" and isinstance(bobj.get("data"), str):
+                                b64_val = bobj.get("data")  # type: ignore[assignment]
+
+                        if b64_val:
+                            image_data_urls.append(f"data:{mime};base64,{b64_val}")
 
             # evidence_data 内の表形式データ（rows など）を抽出
             def _as_rows(name: str, value: Any) -> Optional[Dict[str, Any]]:
@@ -284,12 +329,22 @@ class ProcessLLMBlock(ProcessingBlock):
             structured_llm = llm.with_structured_output(DynamicOutModel)
             # スキーマもヒントとして渡す（モデル側の自己整合性を高める）
             schema_hint = json.dumps(output_schema, ensure_ascii=False)
-            data_obj = structured_llm.invoke(
-                [
+            # マルチモーダル: テキスト + 画像（image_url:data URI）
+            if allow_images and image_data_urls:
+                parts: List[Dict[str, Any]] = [{"type": "text", "text": f"入力:\n{human_content}\n\n出力スキーマ:\n{schema_hint}"}]
+                for url in image_data_urls:
+                    parts.append({"type": "image_url", "image_url": {"url": url}})
+                messages = [
+                    SystemMessage(content=sys_prompt),
+                    HumanMessage(content=parts),
+                ]
+            else:
+                messages = [
                     SystemMessage(content=sys_prompt),
                     HumanMessage(content=f"""入力:\n{human_content}\n\n出力スキーマ:\n{schema_hint}"""),
                 ]
-            )
+
+            data_obj = structured_llm.invoke(messages)
             # スキーマに完全準拠した構造化結果を results に格納して返す（BlockSpecのoutputsに準拠）
             structured = data_obj.model_dump()
             summary = {
@@ -298,6 +353,7 @@ class ProcessLLMBlock(ProcessingBlock):
                 "model": model_label,
                 "temperature": temperature,
                 "group_key": inputs.get("group_key"),
+                "images": len(image_data_urls),
             }
             try:
                 # 結果の概要（キー/件数のみ）

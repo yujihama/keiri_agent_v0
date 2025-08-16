@@ -262,8 +262,10 @@ class InteractiveInputBlock(UIBlock):
         - file/files/folder 型はアップローダを併用
         """
 
-        # セッション内のチャット履歴
-        chat_key = f"chat_history_{ctx.run_id}"
+        # セッション内のチャット履歴（ノード単位で分離）
+        # plan_id と base_key（通常はノードID）を含めて、連続する inquire ノード間で履歴が混在しないようにする
+        plan_id = ctx.vars.get("__plan_id", "default")
+        chat_key = f"chat_history::{plan_id}::{base_key}"
         if chat_key not in st.session_state:
             st.session_state[chat_key] = []
         initial_turn = (len(st.session_state[chat_key]) == 0)
@@ -461,7 +463,8 @@ Requirements:
                 }, tag="ui.inquire")
 
             def _handle_completion_or_next(response: LLMResponse, is_initial: bool, assistant_placeholder: Optional[Any] = None) -> None:
-                if response.is_complete or not _get_missing_fields():
+                # 収集完了の判定は必須フィールドがすべて埋まっていることを基準にする
+                if not _get_missing_fields():
                     completion_msg = "必要な情報の収集が完了しました。ありがとうございました。"
                     st.session_state[chat_key].append({"role": "assistant", "content": completion_msg})
                     self._log(ctx, {"mode": "inquire", "event": "chat_assistant", "message": completion_msg[:200]}, tag="ui.inquire")
@@ -496,6 +499,17 @@ Requirements:
                     response = _invoke_llm(user_message=None, show_spinner=False)
                     _apply_llm_response(response)
                     _handle_completion_or_next(response, is_initial=True)
+                    # 初回の呼び出しで完了した場合は、この描画サイクルで確定結果を返す
+                    if state.get("submitted", False) or not _get_missing_fields():
+                        if collected_data:
+                            with st.expander("収集済みデータ", expanded=True):
+                                st.json(collected_data)
+                        return {
+                            "collected_data": collected_data,
+                            "approved": True,
+                            "response": "収集完了",
+                            "metadata": {"timestamp": datetime.now().isoformat(), "mode": "inquire", "done": True, "submitted": True},
+                        }
                 except Exception as e:
                     print(e)
                     st.error(f"LLM呼び出しに失敗しました: {e}")
@@ -543,6 +557,17 @@ Requirements:
                     response = _invoke_llm(user_message=user_message, show_spinner=True, spinner_placeholder=_spinner_placeholder)
                     _apply_llm_response(response)
                     _handle_completion_or_next(response, is_initial=False, assistant_placeholder=_spinner_placeholder)
+                    # 入力後に完了していれば、この描画サイクルで確定結果を返す
+                    if state.get("submitted", False) or not _get_missing_fields():
+                        if collected_data:
+                            with st.expander("収集済みデータ", expanded=True):
+                                st.json(collected_data)
+                        return {
+                            "collected_data": collected_data,
+                            "approved": True,
+                            "response": "収集完了",
+                            "metadata": {"timestamp": datetime.now().isoformat(), "mode": "inquire", "done": True, "submitted": True},
+                        }
                 except Exception as e:
                     print(e)
                     st.error(f"LLM呼び出しに失敗しました: {e}")

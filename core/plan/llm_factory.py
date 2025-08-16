@@ -29,7 +29,7 @@ def build_chat_llm(*, temperature: float = 0.0, callbacks: Optional[list[Any]] =
         - AZURE_OPENAI_ENDPOINT (required)
         - AZURE_OPENAI_API_VERSION or OPENAI_API_VERSION (optional, default "2024-02-15-preview")
         - AZURE_OPENAI_DEPLOYMENT or KEIRI_AGENT_AZURE_DEPLOYMENT (required if provider=azure)
-          If none is provided, falls back to KEIRI_AGENT_LLM_MODEL, then "gpt-4o-mini".
+          If none is provided, falls back to KEIRI_AGENT_LLM_MODEL, then "gpt-4.1".
     """
 
     from langchain_openai import ChatOpenAI  # type: ignore
@@ -49,7 +49,7 @@ def build_chat_llm(*, temperature: float = 0.0, callbacks: Optional[list[Any]] =
             os.getenv("AZURE_OPENAI_DEPLOYMENT")
             or os.getenv("KEIRI_AGENT_AZURE_DEPLOYMENT")
             or os.getenv("KEIRI_AGENT_LLM_MODEL")
-            or "gpt-4o-mini"
+            or "gpt-4.1"
         )
         if not api_key or not endpoint:
             raise RuntimeError(

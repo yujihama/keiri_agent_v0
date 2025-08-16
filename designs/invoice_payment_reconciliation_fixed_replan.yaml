@@ -92,6 +92,8 @@ graph:
         block: ai.process_llm
         in:
           evidence_data: ${vars.sample_group.evidence}
+          allow_images: true
+          max_images: 6
           group_key: ${vars.sample_group.key}
           instruction: ${vars.sample_group.key}の請求書と入金明細を照合し、金額が一致するか検証してください。一致/不一致、請求金額、入金金額、差額、コメントを出力してください。
           output_schema:
