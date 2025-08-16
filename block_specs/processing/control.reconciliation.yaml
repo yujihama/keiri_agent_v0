@@ -1,0 +1,28 @@
+id: control.reconciliation
+version: 0.1.0
+entrypoint: blocks/processing/control/reconciliation.py:ControlReconciliationBlock
+inputs:
+  left:
+    type: array
+  right:
+    type: array
+  keys:
+    type: array
+    description: '照合キー（例: ["vendor_id","invoice_no"]）'
+  options:
+    type: object
+    description: '比較対象フィールド指定（compare_fields）など'
+outputs:
+  matched:
+    type: array
+  diffs:
+    type: array
+  left_only:
+    type: array
+  right_only:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  左右データの突合せ（reconciliation）を行い、合致・差異・片側のみを返す。キーは大文字小文字を無視して評価する。

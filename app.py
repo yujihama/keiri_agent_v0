@@ -7,6 +7,7 @@ from core.blocks.registry import BlockRegistry
 from ui.tabs import design as tab_design
 from ui.tabs import execute as tab_execute
 from ui.tabs import logs as tab_logs
+from ui.tabs import reviewer as tab_reviewer
 from ui import logging as ulog
 
 
@@ -21,12 +22,14 @@ def main():
     registry.load_specs()
     ulog.configure_logging()
 
-    tab1, tab2, tab3 = st.tabs(["業務設計", "業務実施", "ログ"])
+    tab1, tab2, tab3, tab4 = st.tabs(["業務設計", "業務実施", "レビュー", "ログ"])
     with tab1:
         tab_design.render(registry)
     with tab2:
         tab_execute.render(registry)
     with tab3:
+        tab_reviewer.render(registry)
+    with tab4:
         tab_logs.render()
 
 

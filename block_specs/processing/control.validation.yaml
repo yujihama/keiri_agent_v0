@@ -1,0 +1,19 @@
+id: control.validation
+version: 0.1.0
+entrypoint: blocks/processing/control/validation.py:ControlValidationBlock
+inputs:
+  dataset:
+    type: array
+  rules:
+    type: array
+    description: '例: [{ id, type: required|range|unique, field?, fields?, min?, max? }]'
+  options:
+    type: object
+outputs:
+  violations:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  統制文脈での汎用的な検証ブロック。必須/範囲/一意を最小セットとして提供し、Plan側のルール宣言で拡張可能。

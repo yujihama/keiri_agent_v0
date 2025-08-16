@@ -1,0 +1,18 @@
+id: evidence.audit_report
+version: 0.1.0
+entrypoint: blocks/processing/evidence/audit_report.py:EvidenceAuditReportBlock
+inputs:
+  report_scope:
+    type: object
+    description: '対象スコープ（将来の絞り込み用）'
+  verify_integrity:
+    type: boolean
+    description: 'ハッシュ検証を行い、レポートにhash列を含めるか'
+outputs:
+  audit_report:
+    type: object
+  report_file_path:
+    type: string
+requirements: []
+description: |
+  Evidence Vault 内のファイル一覧を監査レポート（CSV）として出力するブロック。必要に応じてハッシュ検証も実施。

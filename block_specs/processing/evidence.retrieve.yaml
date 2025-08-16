@@ -1,0 +1,33 @@
+id: evidence.retrieve
+version: 0.1.0
+entrypoint: blocks/processing/evidence/retrieve.py:EvidenceRetrieveBlock
+inputs:
+  evidence_id:
+    type: string
+    description: '証跡ID（sha256ハッシュ想定）。name/path指定がある場合は省略可'
+  name:
+    type: string
+    description: 'ファイル名（runs/evidence配下）'
+  path:
+    type: string
+    description: 'フルパス、または evidence ディレクトリからの相対パス'
+  verify_integrity:
+    type: boolean
+    description: 'ハッシュ照合を行うか（デフォルトtrue）'
+  return_base64:
+    type: boolean
+    description: 'base64文字列で返すか（bytes返却を避けたい場合にtrue）'
+outputs:
+  found:
+    type: boolean
+  evidence_data_base64:
+    type: string
+  evidence_data_bytes:
+    type: bytes
+  metadata:
+    type: object
+  integrity_ok:
+    type: boolean
+requirements: []
+description: |
+  Evidence Vault から証跡を取得するブロック。ID/名前/パスの指定を柔軟に受け、必要に応じて完全性検証（sha256）を行う。

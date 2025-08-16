@@ -1542,3 +1542,27 @@ keiri_agent_v0/
 - 統制実施の透明性
 - リスクベース監査の実現
 
+## P1 基本ブロック I/O（最新）
+
+### control.approval
+- inputs: `route_definition`, `decisions`, `context`
+- outputs: `approved`, `route_log`, `violations`
+
+### control.sod_check
+- inputs: `assignments`, `sod_matrix`, `scope`
+- outputs: `violations`, `summary`
+
+### control.sampling
+- inputs: `population`, `method`, `size`, `attribute_rules`, `risk_weights`, `seed`
+- outputs: `samples`, `excluded`, `summary`
+
+## P5 拡張ブロック（雛形）
+
+### control.reconciliation
+- inputs: `left`, `right`, `keys`, `options(compare_fields)`
+- outputs: `matched`, `diffs`, `left_only`, `right_only`, `summary`
+
+### control.validation
+- inputs: `dataset`, `rules`, `options`
+- outputs: `violations`, `summary`
+

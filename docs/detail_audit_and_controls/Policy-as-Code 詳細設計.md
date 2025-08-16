@@ -1262,6 +1262,16 @@ spec:
     audit_log_retention_years: 7
 ```
 
+## 段階移行（現行→将来）
+- 現行: `control.policy_enforce` により閾値/必須/禁止/正規表現/一意の最小検証を実行
+- 将来: `policy.validate` に集約し、検証コンテキスト（validation_context）を受ける
+
+### `policy.validate` 最小Spec
+- id: `policy.validate`
+- entrypoint: `blocks/processing/control/policy_validate.py:PolicyValidateBlock`
+- inputs: `validation_context`（例: `{ items: [...] }`）, `rules`, `options`
+- outputs: `violations`, `passed`, `validation_context`
+
 ### 7. 実装ディレクトリ構造
 
 ```

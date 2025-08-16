@@ -1125,3 +1125,40 @@ graph:
 - **アクセス履歴**: 証跡へのアクセス記録
 - **監査人対応**: 即座の証跡提供能力
 
+## P2 追加ブロック（雛形）
+
+### evidence.retrieve
+- id: `evidence.retrieve`
+- entrypoint: `blocks/processing/evidence/retrieve.py:EvidenceRetrieveBlock`
+- inputs: `evidence_id?`, `name?`, `path?`, `verify_integrity?`, `return_base64?`
+- outputs: `found`, `evidence_data_base64|evidence_data_bytes`, `metadata`, `integrity_ok`
+
+### evidence.search
+- id: `evidence.search`
+- entrypoint: `blocks/processing/evidence/search.py:EvidenceSearchBlock`
+- inputs: `search_criteria{name_contains, ext, min_size, max_size}`, `compute_hash?`
+- outputs: `search_results`, `total_count`
+
+### evidence.audit_report
+- id: `evidence.audit_report`
+- entrypoint: `blocks/processing/evidence/audit_report.py:EvidenceAuditReportBlock`
+- inputs: `report_scope?`, `verify_integrity?`
+- outputs: `audit_report`, `report_file_path`
+
+#### Plan断片（store→search連携）
+```yaml
+- id: store_evidence
+  block: evidence.vault.store
+  in:
+    items: ${collected_artifacts}
+  out:
+    stored: stored
+
+- id: search_evidence
+  block: evidence.search
+  in:
+    search_criteria: { name_contains: "invoice" }
+  out:
+    search_results: found
+```
+

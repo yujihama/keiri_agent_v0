@@ -1,0 +1,22 @@
+id: policy.validate
+version: 0.1.0
+entrypoint: blocks/processing/control/policy_validate.py:PolicyValidateBlock
+inputs:
+  validation_context:
+    type: object
+    description: '検証対象の文脈（例: { items: [...] })'
+  rules:
+    type: array
+    description: 'threshold / required / unique の最小セットをサポート'
+  options:
+    type: object
+outputs:
+  violations:
+    type: array
+  passed:
+    type: boolean
+  validation_context:
+    type: object
+requirements: []
+description: |
+  Policy-as-Code の将来フェーズに向けた最小検証ブロック。現行の control.policy_enforce と並行利用を想定。
