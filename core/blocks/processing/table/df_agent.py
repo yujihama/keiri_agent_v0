@@ -465,7 +465,8 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                     raise wrap_exception(e, ErrorCode.CONFIG_MISSING, inputs)
 
         # 受け入れ可能なキーワード引数はバージョン差があるため、動的に付与
-        agent_kwargs: Dict[str, Any] = {"verbose": True}
+        prompt_prefix = "Assume 'df' is the dataframe provided and already loaded in the environment."
+        agent_kwargs: Dict[str, Any] = {"verbose": True, "allow_dangerous_code": True, "prefix": prompt_prefix}
         # Try attach callbacks at creation time (version-dependent)
         agent = None
         try:
@@ -474,6 +475,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                 dfs_ordered,
                 allow_dangerous_code=True,
                 verbose=True,
+                prefix=prompt_prefix,
                 callbacks=[callback_handler],
                 handle_parsing_errors=True,
             )
@@ -484,6 +486,7 @@ class PandasDataframeAgentBlock(ProcessingBlock):
                     dfs_ordered,
                     allow_dangerous_code=True,
                     verbose=True,
+                    prefix=prompt_prefix,
                     agent_executor_kwargs={
                         "callbacks": [callback_handler],
                         "handle_parsing_errors": True,
