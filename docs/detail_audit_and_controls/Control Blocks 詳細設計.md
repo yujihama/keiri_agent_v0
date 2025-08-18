@@ -1,6 +1,8 @@
-# Control Blocks 詳細設計
+# Control Blocks 詳細設計（機能版）
 
 ## 概要
+
+注記: 本書は機能面のみに絞り、非機能（性能・セキュリティ・テスト計画・ROI等）は別資料に切り出します。
 
 Control Blocksは、監査・内部統制業務に特化したブロック群です。既存のKeiri Agentアーキテクチャを活用し、監査・内部統制の専門的な処理を標準化・自動化します。
 
@@ -80,10 +82,10 @@ Control Blocksは、監査・内部統制業務に特化したブロック群で
 ### ブロック仕様（YAML）
 
 ```yaml
-# block_specs/processing/control/approval.yaml
+# block_specs/processing/control.approval.yaml
 id: control.approval
-version: 1.0.0
-entrypoint: blocks/processing/control/approval.py:ApprovalBlock
+version: 0.1.0
+entrypoint: blocks/processing/control/approval.py:ApprovalControlBlock
 description: 多段承認フローの実行と承認履歴の管理
 
 inputs:
@@ -403,9 +405,9 @@ class ApprovalBlock(ProcessingBlock):
 ### ブロック仕様（YAML）
 
 ```yaml
-# block_specs/processing/control/sod_check.yaml
+# block_specs/processing/control.sod_check.yaml
 id: control.sod_check
-version: 1.0.0
+version: 0.1.0
 entrypoint: blocks/processing/control/sod_check.py:SodCheckBlock
 description: 職務分掌の検証と利益相反の検知
 
@@ -803,9 +805,9 @@ class SodCheckBlock(ProcessingBlock):
 ### ブロック仕様（YAML）
 
 ```yaml
-# block_specs/processing/control/sampling.yaml
+# block_specs/processing/control.sampling.yaml
 id: control.sampling
-version: 1.0.0
+version: 0.1.0
 entrypoint: blocks/processing/control/sampling.py:SamplingBlock
 description: 統計的・属性・リスクベースサンプリングの実行
 
@@ -1461,84 +1463,10 @@ graph:
       condition: ${ui_review_results.approval}
 ```
 
-### 実装ディレクトリ構造
+### 今後の拡張（構成の方針）
 
-```
-keiri_agent_v0/
-├── block_specs/
-│   └── processing/
-│       └── control/
-│           ├── approval.yaml
-│           ├── sod_check.yaml
-│           ├── sampling.yaml
-│           ├── reconciliation.yaml
-│           ├── validation.yaml
-│           ├── documentation.yaml
-│           ├── risk_assessment.yaml
-│           ├── compliance_check.yaml
-│           └── audit_trail.yaml
-├── core/
-│   └── blocks/
-│       └── processing/
-│           └── control/
-│               ├── __init__.py
-│               ├── approval.py
-│               ├── sod_check.py
-│               ├── sampling.py
-│               ├── reconciliation.py
-│               ├── validation.py
-│               ├── documentation.py
-│               ├── risk_assessment.py
-│               ├── compliance_check.py
-│               └── audit_trail.py
-├── designs/
-│   ├── internal_control_audit.yaml
-│   ├── approval_workflow.yaml
-│   ├── sod_compliance_check.yaml
-│   └── risk_based_testing.yaml
-└── templates/
-    ├── internal_control_audit_report.xlsx
-    ├── approval_matrix.xlsx
-    └── sod_matrix.xlsx
-```
+- 既存: `block_specs/processing/control.*.yaml`, `core/blocks/processing/control/*.py`
+- 追加予定（計画）: `control.reconciliation`, `control.validation` の Spec/実装
 
-### 統合テストシナリオ
-
-#### シナリオ1: 承認統制テスト
-1. 取引データのアップロード
-2. 承認ポリシーの適用
-3. 承認フローの検証
-4. 違反事項の検出
-5. 証跡の生成
-
-#### シナリオ2: 職務分掌テスト
-1. ユーザーロール情報の読み込み
-2. 取引における役割分担の分析
-3. 利益相反の検知
-4. コンプライアンススコアの算出
-5. 改善提案の生成
-
-#### シナリオ3: 統合監査プロセス
-1. 複数統制の同時テスト
-2. リスクベースサンプリング
-3. 結果の統合分析
-4. 監査レポートの自動生成
-5. 証跡の一元管理
-
-### 期待効果
-
-#### 効率化効果
-- 監査工数削減: 50-70%
-- 統制テスト時間短縮: 60-80%
-- 証跡作成自動化: 90%以上
-
-#### 品質向上効果
-- 人的エラー削減: 80%以上
-- 統制テストの標準化: 100%
-- 証跡の完全性確保: 100%
-
-#### コンプライアンス強化
-- 監査証跡の完全性
-- 統制実施の透明性
-- リスクベース監査の実現
+<!-- 非機能/テスト/ROI 等は別文書で管理するため本書からは省略 -->
 

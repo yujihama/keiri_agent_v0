@@ -338,6 +338,18 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
                                 errors.append(
                                     f"Node {n.id}: input '{k}' type mismatch for config value (expected {expected_type}, got {type(val).__name__})"
                                 )
+                else:
+                    # Literal provided: if spec declares enum, enforce membership
+                    if n.block and n.block in block_specs:
+                        spec_in = (block_specs[n.block].inputs or {}).get(k) or {}
+                        enum_vals = spec_in.get("enum")
+                        if enum_vals and isinstance(enum_vals, list):
+                            # Only check simple scalar literals (str/number/bool)
+                            if isinstance(v, (str, int, float, bool)):
+                                if v not in enum_vals:
+                                    errors.append(
+                                        f"Node {n.id}: input '{k}' value '{v}' not in enum {enum_vals}"
+                                    )
                 continue
             src_node, alias = ref
             if src_node not in node_ids:

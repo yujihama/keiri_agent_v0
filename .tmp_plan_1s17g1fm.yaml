@@ -1,0 +1,86 @@
+apiVersion: v1
+id: generated_plan
+description: null
+version: 0.1.0
+vars:
+  instruction: 請求書・入金明細の照合とExcelレポート出力
+policy:
+  on_error: continue
+  retries: 0
+  concurrency: null
+  timeout_ms: null
+ui:
+  layout: []
+graph:
+- id: load_invoice_data
+  description: null
+  block: null
+  type: load
+  in: {}
+  out: {}
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: load_payment_data
+  description: null
+  block: null
+  type: load
+  in: {}
+  out: {}
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: validate_invoice_data
+  description: null
+  block: data.quality.validate_rules
+  type: validate
+  in: {}
+  out: {}
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: validate_payment_data
+  description: null
+  block: data.quality.validate_rules
+  type: validate
+  in: {}
+  out: {}
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: match_records
+  description: null
+  block: matching.record_linkage
+  type: match
+  in: {}
+  out: {}
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: generate_report
+  description: null
+  block: excel.update_workbook
+  type: report
+  in: {}
+  out: {}
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null

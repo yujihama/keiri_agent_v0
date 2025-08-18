@@ -1,0 +1,146 @@
+apiVersion: v1
+id: invoice_payment_reconciliation
+description: null
+version: 0.1.0
+vars:
+  invoice_sheet: 請求書
+  payment_sheet: 入金明細
+  output_sheet: 照合結果
+policy:
+  on_error: continue
+  retries: 0
+  concurrency: null
+  timeout_ms: null
+ui:
+  layout:
+  - ui_invoice_upload
+  - ui_payment_upload
+graph:
+- id: ui_invoice_upload
+  description: null
+  block: ui.interactive_input
+  type: null
+  in:
+    mode: file
+    requirements:
+    - type: file
+      name: invoice_file
+      label: 請求書Excelファイルをアップロードしてください
+    message: 請求書Excelファイルをアップロードしてください
+  out:
+    collected_data: invoice_file
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: ui_payment_upload
+  description: null
+  block: ui.interactive_input
+  type: null
+  in:
+    mode: file
+    requirements:
+    - type: file
+      name: payment_file
+      label: 入金明細Excelファイルをアップロードしてください
+    message: 入金明細Excelファイルをアップロードしてください
+  out:
+    collected_data: payment_file
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: read_invoice
+  description: null
+  block: excel.read_data
+  type: null
+  in:
+    mode: sheet
+    read_config:
+      sheet: ${vars.invoice_sheet}
+      header_row: 1
+    recalc: false
+    workbook: ${ui_invoice_upload.invoice_file}
+  out:
+    data: invoice_data
+    rows: invoice_rows
+    summary: invoice_summary
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: read_payment
+  description: null
+  block: excel.read_data
+  type: null
+  in:
+    mode: sheet
+    read_config:
+      sheet: ${vars.payment_sheet}
+      header_row: 1
+    recalc: false
+    workbook: ${ui_payment_upload.payment_file}
+  out:
+    data: payment_data
+    rows: payment_rows
+    summary: payment_summary
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: llm_reconcile
+  description: null
+  block: ai.process_llm
+  type: null
+  in:
+    evidence_data:
+      invoices: ${read_invoice.data}
+      payments: ${read_payment.data}
+    instruction: 請求書データと入金明細データを照合し、各請求書ごとに対応する入金明細を紐付けてください。照合結果として、請求書番号、請求金額、入金金額、入金日、照合ステータス（完全一致/部分一致/未入金）を出力してください。
+    output_schema:
+      請求書番号: string
+      請求金額: number
+      入金金額: number
+      入金日: string
+      照合ステータス: string
+  out:
+    results: reconcile_results
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null
+- id: write_result
+  description: null
+  block: excel.write
+  type: null
+  in:
+    workbook: ${ui_invoice_upload.invoice_file}
+    column_updates:
+      sheet: ${vars.output_sheet}
+      columns:
+        請求書番号: 請求書番号
+        請求金額: 請求金額
+        入金金額: 入金金額
+        入金日: 入金日
+        照合ステータス: 照合ステータス
+      values: ${llm_reconcile.results}
+  out:
+    workbook_b64: result_file
+    workbook_updated: result_workbook
+    write_summary: write_summary
+  when: null
+  foreach: null
+  while: null
+  body: null
+  call: null
+  policy: null

@@ -1,6 +1,8 @@
-# Evidence Vault 詳細設計
+# Evidence Vault 詳細設計（機能版）
 
 ## 概要
+
+注記: 本書は機能面のみに絞り、非機能（暗号・可用性・運用・テスト・ROI等）は別資料に切り出します。
 
 Evidence Vaultは、Keiri Agentにおける完全な監査証跡管理システムです。すべての処理実行、データ変換、統制テスト、承認プロセスの証跡を暗号化・改ざん検知機能付きで永続保存し、監査人や規制当局への透明性を確保します。
 
@@ -28,7 +30,7 @@ Evidence Vaultは、Keiri Agentにおける完全な監査証跡管理システ�
 
 ## アーキテクチャ設計
 
-### 1. 既存システムとの統合
+### 1. 既存システムとの統合（機能要点のみ）
 
 #### BlockContextの拡張
 ```python
@@ -383,13 +385,13 @@ class ProcessingBlock(ABC):
 
 ### 4. Evidence Vault専用ブロック
 
-#### evidence.store ブロック
+#### evidence.vault.store ブロック（現行）
 ```yaml
-# block_specs/processing/evidence/store.yaml
-id: evidence.store
-version: 1.0.0
-entrypoint: blocks/processing/evidence/store.py:EvidenceStoreBlock
-description: 任意のデータをEvidence Vaultに保存
+# block_specs/processing/evidence.vault.store.yaml
+id: evidence.vault.store
+version: 0.1.0
+entrypoint: blocks/processing/evidence/vault_store.py:EvidenceVaultStoreBlock
+description: 証跡（Evidence）を金庫に保存
 
 inputs:
   evidence_data:
@@ -435,7 +437,7 @@ output_schema:
   required: [evidence_id, storage_path, file_hash, retention_until]
 ```
 
-#### evidence.retrieve ブロック
+#### evidence.retrieve ブロック（計画）
 ```yaml
 # block_specs/processing/evidence/retrieve.yaml
 id: evidence.retrieve
@@ -480,7 +482,7 @@ output_schema:
   required: [evidence_data, metadata, retrieval_timestamp]
 ```
 
-#### evidence.search ブロック
+#### evidence.search ブロック（計画）
 ```yaml
 # block_specs/processing/evidence/search.yaml
 id: evidence.search
@@ -563,7 +565,7 @@ output_schema:
 
 ### 5. 監査レポート生成機能
 
-#### evidence.audit_report ブロック
+#### evidence.audit_report ブロック（計画）
 ```yaml
 # block_specs/processing/evidence/audit_report.yaml
 id: evidence.audit_report
@@ -938,7 +940,7 @@ graph:
   # 2. 初期証跡保存
   - id: store_source_evidence
     description: 監査対象文書の証跡保存
-    block: evidence.store
+    block: evidence.vault.store
     in:
       evidence_data: ${ui_audit_setup.collected_data}
       evidence_type: "document"
@@ -961,7 +963,7 @@ graph:
   # 4. 処理結果の証跡保存
   - id: store_processing_evidence
     description: 処理結果の証跡保存
-    block: evidence.store
+    block: evidence.vault.store
     in:
       evidence_data:
         processed_data: ${process_audit_data.processed_data}
@@ -1001,7 +1003,7 @@ graph:
   # 6. 統制テスト結果の証跡保存
   - id: store_control_evidence
     description: 統制テスト結果の証跡保存
-    block: evidence.store
+    block: evidence.vault.store
     in:
       evidence_data:
         control_test_results: ${control_testing.control_results}
@@ -1049,7 +1051,7 @@ graph:
   # 9. 最終証跡保存
   - id: store_final_evidence
     description: 最終監査レポートの証跡保存
-    block: evidence.store
+    block: evidence.vault.store
     in:
       evidence_data:
         audit_report: ${generate_audit_report.final_report}
@@ -1108,7 +1110,7 @@ graph:
       audit_completed: approved
 ```
 
-### 8. 期待効果とメリット
+### 8. 期待効果とメリット（本フェーズ対象外のため省略）
 
 #### 監査効率化
 - **証跡作成自動化**: 手動作業を90%削減

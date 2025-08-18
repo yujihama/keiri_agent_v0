@@ -28,7 +28,7 @@ def test_generate_plan_sequential_validates_and_dry_runs(tmp_path: Path):
             instruction="請求書・入金明細を照合し、Excelに書き出す",
             documents_text=["手順書: ZIPを解析しAIで照合"],
             registry=reg,
-            options=DesignEngineOptions(suggest_when=True),
+            options=DesignEngineOptions(),
         )
     except Exception as e:
         msg = str(e)
@@ -44,7 +44,7 @@ def test_generate_plan_sequential_validates_and_dry_runs(tmp_path: Path):
     assert dry_run_plan(plan, reg) is True
 
 
-def test_generate_plan_with_foreach(tmp_path: Path):
+def test_generate_plan_staged(tmp_path: Path):
     load_dotenv()
     reg = _make_registry()
     try:
@@ -52,7 +52,7 @@ def test_generate_plan_with_foreach(tmp_path: Path):
             instruction="各行を検証してExcelに集約",
             documents_text=["リスト処理"],
             registry=reg,
-            options=DesignEngineOptions(suggest_foreach=True, foreach_var_name="items"),
+            options=DesignEngineOptions(),
         )
     except Exception as e:
         msg = str(e)
@@ -61,11 +61,6 @@ def test_generate_plan_with_foreach(tmp_path: Path):
             return
         pytest.skip(f"LLM生成に失敗: {e}")
     plan = gen.plan
-    # foreach ノードが含まれること
-    loop_nodes = [n for n in plan.graph if n.type == "loop" and n.foreach]
-    if not loop_nodes:
-        warnings.warn("LLM生成プランにforeachループが含まれませんでした（warning扱い）")
-        return
     errors = validate_plan(plan, reg)
     if errors:
         warnings.warn(f"LLM生成プランの検証に失敗しました（warning扱い）: {errors}")

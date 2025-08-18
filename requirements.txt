@@ -29,3 +29,4 @@ requests>=2.31.0
 croniter>=1.4.1
 datasketch>=1.6.0
 cryptography>=42.0.0
+numpy>=1.26.0
