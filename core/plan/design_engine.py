@@ -620,21 +620,21 @@ def generate_business_overview(
 
 # Few-shot（簡略例）
 processes: [
-  {
+  {{
     "id": "read_zip",
     "description": "ZIPを解凍してファイル一覧を得る",
-    "foreach": {"item": "file", "in": "${inputs.zip_files}"}
-  },
-  {
+    "foreach": {{"item": "file", "in": "${{inputs.zip_files}}"}}
+  }},
+  {{
     "id": "parse_if_needed",
     "description": "必要な場合だけ解析する",
-    "when": {"expr": "${vars.need_parse}"}
-  },
-  {
+    "when": {{"expr": "${{vars.need_parse}}"}}
+  }},
+  {{
     "id": "retry_llm",
     "description": "抽出が安定するまで再試行",
-    "while_": {"expr": "${vars.retry}"}
-  }
+    "while_": {{"expr": "${vars.retry}"}}
+  }},
 ]
 """
     llm, _ = build_chat_llm(temperature=0)
