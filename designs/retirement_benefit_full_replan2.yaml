@@ -220,8 +220,11 @@ graph:
         - { type: copy_sheet, sheet_name: "${compute_q.template_sheet_name}", target: "${compute_q.target_sheet_name}" }
         # 4-2: C2セルへ期末日（YYYY-MM-DD）
         # - { type: update_cells, sheet_name: "${compute_q.target_sheet_name}", target: "B2", data: "${compute_q.period.end}" }
-        # 4-3: E4セルへ期首日（YYYY-MM-DD）
-        - { type: update_cells, sheet_name: "${compute_q.target_sheet_name}", target: "E4", data: "${compute_q.period.start}" }
+        # 4-3: E4セルへ期首日（数式で日付型に変換）
+        - type: update_formula
+          sheet_name: "${compute_q.target_sheet_name}"
+          cells:
+            "E4": '=DATEVALUE("${compute_q.period.start}")'
         # 4-4: J3セルの式の参照先シート名を前四半期に置換（replace_in_formulas）
         - type: replace_in_formulas
           sheet_name: "${compute_q.target_sheet_name}"
