@@ -10,7 +10,8 @@ inputs:
     description: |
       実行する更新操作の配列。
       - { type: add_sheet, sheet_name }
-      - { type: copy_sheet, sheet_name, target }
+      - { type: copy_sheet, sheet_name, target, index?: 0, position?: first|last, before?: name, after?: name }
+      - { type: move_sheet, sheet_name, index?: 0, position?: first|last, before?: name, after?: name }
       - { type: update_cells, sheet_name, cells: {A1: value, ...} | target: "A1", data: value }
       - { type: append_table, sheet_name, target: "A1", data: list[object]|dict|DataFrame }
       - { type: append_rows_bottom, sheet_name, rows: list[object], columns: { field: "B" }, note: "rowsをテーブル最下行の次に列レター指定で追記" }

@@ -110,6 +110,60 @@ class ExcelUpdateWorkbookBlock(ProcessingBlock):
                     src_ws = wb[src]
                     new_ws = wb.copy_worksheet(src_ws)
                     new_ws.title = dst
+                    # placement control
+                    idx = op.get("index")
+                    pos = (op.get("position") or "").strip().lower()
+                    before = op.get("before")
+                    after = op.get("after")
+                    try:
+                        if isinstance(idx, int):
+                            wb._sheets.remove(new_ws)
+                            wb._sheets.insert(max(0, idx), new_ws)
+                        elif pos == "first":
+                            wb._sheets.remove(new_ws)
+                            wb._sheets.insert(0, new_ws)
+                        elif pos == "last":
+                            pass  # default is last
+                        elif isinstance(before, str) and before in wb.sheetnames:
+                            wb._sheets.remove(new_ws)
+                            tgt = wb[before]
+                            i = wb._sheets.index(tgt)
+                            wb._sheets.insert(i, new_ws)
+                        elif isinstance(after, str) and after in wb.sheetnames:
+                            wb._sheets.remove(new_ws)
+                            tgt = wb[after]
+                            i = wb._sheets.index(tgt)
+                            wb._sheets.insert(i + 1, new_ws)
+                    except Exception:
+                        pass
+            elif optype == "move_sheet":
+                name = op.get("sheet_name")
+                if isinstance(name, str) and name in wb.sheetnames:
+                    ws = wb[name]
+                    idx = op.get("index")
+                    pos = (op.get("position") or "").strip().lower()
+                    before = op.get("before")
+                    after = op.get("after")
+                    try:
+                        wb._sheets.remove(ws)
+                        if isinstance(idx, int):
+                            wb._sheets.insert(max(0, idx), ws)
+                        elif pos == "first":
+                            wb._sheets.insert(0, ws)
+                        elif pos == "last":
+                            wb._sheets.append(ws)
+                        elif isinstance(before, str) and before in wb.sheetnames:
+                            tgt = wb[before]
+                            i = wb._sheets.index(tgt)
+                            wb._sheets.insert(i, ws)
+                        elif isinstance(after, str) and after in wb.sheetnames:
+                            tgt = wb[after]
+                            i = wb._sheets.index(tgt)
+                            wb._sheets.insert(i + 1, ws)
+                        else:
+                            wb._sheets.append(ws)
+                    except Exception:
+                        pass
             elif optype == "update_cells":
                 name = op.get("sheet_name") or "Results"
                 ws = _get_ws(name)
