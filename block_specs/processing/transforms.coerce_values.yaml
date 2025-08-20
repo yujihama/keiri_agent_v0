@@ -1,0 +1,31 @@
+id: transforms.coerce_values
+version: 0.1.0
+entrypoint: blocks/processing/transforms/coerce_values.py:CoerceValuesBlock
+inputs:
+  items:
+    type: array
+    description: list[object] 形式の行配列
+  specs:
+    type: array
+    description: |
+      型変換仕様の配列。
+      各要素: { field: string, type: enum[number,int,float,date,datetime,string,boolean], formats?: array[string] }
+      - number は int 変換を試み、不可なら float にフォールバック
+      - date/datetime は formats があれば優先、無ければ共通フォーマット（%Y-%m-%d, %Y/%m/%d, %Y-%m-%d %H:%M:%S, %Y/%m/%d %H:%M:%S）を試行
+outputs:
+  rows:
+    type: array
+    description: 変換後の行配列
+  summary:
+    type: object
+    description: 入力件数と変換件数
+requirements: []
+tags:
+  - transforms
+  - cast
+  - types
+description: |
+  行配列の指定フィールドに対して、数値・日付・真偽・文字列への型変換を行うブロック。Excel への書き込み時に
+  openpyxl で適切なセル型になるよう、Python の int/float/date/datetime/bool へ変換します。
+
+

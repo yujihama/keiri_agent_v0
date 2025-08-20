@@ -7,7 +7,7 @@ policy:
   on_error: continue
   retries: 0
 ui:
-  layout: [upload_files,select_quarter] # select_salary_format, 
+  layout: [upload_files,select_quarter] #
 graph:
   # -1) 対象ファイルのアップロード（CSV/Excel）
   - id: upload_files
@@ -168,6 +168,34 @@ graph:
     out:
       filtered: joined_in_q
 
+  # 2.5) 役職名の正規化（置換）
+  - id: normalize_roles
+    description: 役職名の表記ゆれを正規化
+    block: transforms.replace_values
+    in:
+      items: ${filter_joined.joined_in_q}
+      rules:
+        - field: "役職"
+          match: "equals"
+          case_insensitive: false
+          mappings:
+            - { from: "管理社員", to: "管理者" }
+            - { from: "スペシャリスト契約社員", to: "ｽﾍﾟｼｬﾘｽﾄ契約社員" }
+    out:
+      rows: joined_in_q_normalized
+
+  # 2.6) Excel 転記前の型変換（社員番号: number / 採用年月日: date）
+  - id: coerce_for_excel
+    description: Excel で適切なセル型となるように値を型変換
+    block: transforms.coerce_values
+    in:
+      items: ${normalize_roles.joined_in_q_normalized}
+      specs:
+        - { field: "社員番号", type: "number" }
+        - { field: "採用年月日", type: "date", formats: ["%Y-%m-%d","%Y/%m/%d","%Y-%m-%d %H:%M:%S","%Y/%m/%d %H:%M:%S"] }
+    out:
+      rows: joined_in_q_typed
+
   # 3) 期間フィルタ: 当四半期に退職した社員（給与明細表）
   - id: filter_retired
     description: 当四半期に退職した社員を抽出
@@ -236,7 +264,7 @@ graph:
             - { header: "氏名", path: "氏名" }
             - { header: "役職", path: "役職" }
             - { header: "採用年月日", path: "採用年月日" }
-          values: ${filter_joined.joined_in_q}
+          values: ${coerce_for_excel.joined_in_q_typed}
       cell_updates:
         - sheet: "${compute_q.target_sheet_name}"
           cells:
