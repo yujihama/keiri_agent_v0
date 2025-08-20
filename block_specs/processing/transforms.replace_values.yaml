@@ -1,0 +1,33 @@
+id: transforms.replace_values
+version: 0.1.0
+entrypoint: blocks/processing/transforms/replace_values.py:ReplaceValuesBlock
+inputs:
+  items:
+    type: array
+    description: list[object] 形式の行配列
+  rules:
+    type: array
+    description: |
+      値置換ルールの配列。
+      各要素: { field: string, mappings: [ { from, to } ], match?: equals|contains|regex, case_insensitive?: bool }
+      - match 既定: equals（完全一致で置換）
+      - case_insensitive 既定: true（大文字小文字を無視）
+outputs:
+  rows:
+    type: array
+    description: 置換後の行配列
+  summary:
+    type: object
+    description: 入力件数・置換件数などの概要
+requirements: []
+tags:
+  - transforms
+  - replace
+  - normalize
+description: |
+  行配列の所定キーに対して、与えられたマッピング規則で値を置換するシンプルなブロック。
+  - equals: 完全一致時に to へ置換
+  - contains: 部分一致（包含）時に to へ置換（substring 置換ではなく値全体を置換）
+  - regex: 正規表現にマッチしたら to へ置換（置換結果は to そのもの／グループ置換は非対応）
+
+
