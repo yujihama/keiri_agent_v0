@@ -96,12 +96,23 @@ graph:
     out:
       rows: salary_pivot_rows_raw
 
+  # 1-b-1) 先頭列ヘッダの正規化（Excelの空セル→col1 になるケースを空文字に揃える）
+  - id: normalize_pivot_first_col
+    description: ピボットシートの先頭列ヘッダを空文字に正規化
+    block: transforms.rename_fields
+    in:
+      items: ${read_salary_pivot.salary_pivot_rows_raw}
+      rename:
+        col1: ""
+    out:
+      rows: salary_pivot_rows_norm
+
   # 1-c) 横持ち→縦持ちへ変換（unpivot -> pivot）
   - id: unpivot_salary
     description: ピボット表をアンピボット
     block: table.unpivot
     in:
-      rows: ${read_salary_pivot.salary_pivot_rows_raw}
+      rows: ${normalize_pivot_first_col.salary_pivot_rows_norm}
       id_vars: ""
       var_name: "氏名"
       value_name: "value"
