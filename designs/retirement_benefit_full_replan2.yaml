@@ -3,21 +3,24 @@ id: retirement_benefit
 version: 1.0.0
 vars:
   instruction: 退職給付金の計算
+  final_workbooks:
+    - wb
+    - wb_people_final
 policy:
   on_error: continue
   retries: 0
 ui:
   layout: [upload_files,select_quarter] #
 graph:
-  # -1) 対象ファイルのアップロード（CSV/Excel）
+  # -1) 対象ファイルのアップロード（Excel）
   - id: upload_files
-    description: 入力ファイル（給与CSV・元帳CSV・ワークブック）をアップロード
+    description: 入力ファイル（給与Excel・元帳Excel・ワークブック）をアップロード
     block: ui.interactive_input
     in:
       mode: collect
       requirements:
-        - { id: salary_csv, type: file, label: "給与明細一覧表.csv", required: true, description: "CSVをアップロード" }
-        - { id: ledger_csv, type: file, label: "退職給付金勘定元帳.csv", required: true, description: "CSVをアップロード" }
+        - { id: salary_xlsx, type: file, label: "給与明細一覧表.xlsx", required: true, description: "Excelをアップロード", accept: ".xlsx" }
+        - { id: ledger_xlsx, type: file, label: "退職給付金勘定元帳.xlsx", required: true, description: "Excelをアップロード", accept: ".xlsx" }
         - { id: workbook, type: file, label: "退職給付ワークブック.xlsx", required: true, description: "テンプレート/直前期のExcelをアップロード", accept: ".xlsx" }
     out:
       collected_data: uploaded
@@ -60,28 +63,36 @@ graph:
       template_sheet_name: template_sheet_name
       quarter_label: quarter_label
 
-  # 1) 給与明細表・退職給付引当元帳のCSV読み込み
-  # 1-a) 縦持ち（通常）CSV の読み込み
+  # 1) 給与明細表・退職給付引当元帳のExcel読み込み
+  # 1-a) 縦持ち（通常）Excel の読み込み
   - id: read_salary
-    description: 給与明細CSVを読み込み（縦持ち）
-    block: file.read_csv
+    description: 給与明細Excelを読み込み（縦持ち）
+    block: excel.read_data
     in:
-      bytes: ${upload_files.uploaded.salary_csv}
-      encoding: utf-8
-      delimiter: ","
-      has_header: true
+      workbook:
+        name: "給与明細一覧表.xlsx"
+        bytes: ${upload_files.uploaded.salary_xlsx}
+      mode: single
+      read_config:
+        header_row: 1
+        sheets:
+          - { name: "Sheet1", header_row: 1 }
     out:
       rows: salary_rows_raw
 
-  # 1-b) 横持ち（ピボット）CSV の読み込み（Shift_JIS想定）
+  # 1-b) 横持ち（ピボット）Excel の読み込み
   - id: read_salary_pivot
-    description: 給与明細CSVを読み込み（横持ちピボット）
-    block: file.read_csv
+    description: 給与明細Excelを読み込み（横持ちピボット）
+    block: excel.read_data
     in:
-      bytes: ${upload_files.uploaded.salary_csv}
-      encoding: cp932
-      delimiter: ","
-      has_header: true
+      workbook:
+        name: "給与明細一覧表.xlsx"
+        bytes: ${upload_files.uploaded.salary_xlsx}
+      mode: single
+      read_config:
+        header_row: 1
+        sheets:
+          - { name: "Sheet1", header_row: 1 }
     out:
       rows: salary_pivot_rows_raw
 
@@ -147,13 +158,17 @@ graph:
       items: salary_rows
 
   - id: read_ledger
-    description: 退職給付金勘定元帳CSVを読み込み
-    block: file.read_csv
+    description: 退職給付金勘定元帳Excelを読み込み
+    block: excel.read_data
     in:
-      bytes: ${upload_files.uploaded.ledger_csv}
-      encoding: utf-8
-      delimiter: ","
-      has_header: true
+      workbook:
+        name: "退職給付金勘定元帳.xlsx"
+        bytes: ${upload_files.uploaded.ledger_xlsx}
+      mode: single
+      read_config:
+        header_row: 1
+        sheets:
+          - { name: "Sheet1", header_row: 1 }
     out:
       rows: ledger_rows
 
