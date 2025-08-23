@@ -93,6 +93,68 @@ class ExcelUpdateWorkbookBlock(ProcessingBlock):
                 r += 1
             return max(0, len(records))
 
+        def _copy_conditional_formatting(src_ws: Worksheet, dst_ws: Worksheet) -> None:
+            """src_ws の条件付き書式を dst_ws に複製する。
+            openpyxl のバージョン差異に配慮して rules/_cf_rules の双方を試行する。
+            重複は簡易シグネチャで抑止する。
+            """
+            try:
+                src_cf = getattr(src_ws, "conditional_formatting", None)
+                dst_cf = getattr(dst_ws, "conditional_formatting", None)
+                if src_cf is None or dst_cf is None:
+                    return
+
+                # 既存の宛先ルールの簡易シグネチャを構築
+                existing: set = set()
+                try:
+                    dest_rules_map = getattr(dst_cf, "rules", None)
+                    if isinstance(dest_rules_map, dict):
+                        for rdef, rules in dest_rules_map.items():
+                            for rule in rules:
+                                existing.add((str(rdef), getattr(rule, "type", None), tuple(getattr(rule, "formula", []) or [])))
+                    else:
+                        dest_cf_rules = getattr(dst_cf, "_cf_rules", None)
+                        if isinstance(dest_cf_rules, dict):
+                            for rdef, rules in dest_cf_rules.items():
+                                for rule in rules:
+                                    existing.add((str(rdef), getattr(rule, "type", None), tuple(getattr(rule, "formula", []) or [])))
+                except Exception:
+                    existing = set()
+
+                # ルールの列挙（rules -> _cf_rules の順でフォールバック）
+                def _iter_src_cf():
+                    src_rules_map = getattr(src_cf, "rules", None)
+                    if isinstance(src_rules_map, dict):
+                        for rdef, rules in src_rules_map.items():
+                            for rule in rules:
+                                yield (str(rdef), rule)
+                        return
+                    src_cf_rules = getattr(src_cf, "_cf_rules", None)
+                    if isinstance(src_cf_rules, dict):
+                        for rdef, rules in src_cf_rules.items():
+                            for rule in rules:
+                                yield (str(rdef), rule)
+
+                from copy import copy as _copy
+
+                for rdef, rule in list(_iter_src_cf()):
+                    sig = (str(rdef), getattr(rule, "type", None), tuple(getattr(rule, "formula", []) or []))
+                    if sig in existing:
+                        continue
+                    try:
+                        # まずはディープコピーで追加
+                        dst_cf.add(str(rdef), _copy(rule))
+                    except Exception:
+                        try:
+                            # コピー不可な場合は参照のまま（openpyxl が必要なら内部でコピーする）
+                            dst_cf.add(str(rdef), rule)
+                        except Exception:
+                            # 最後に諦める
+                            pass
+            except Exception:
+                # 何らかの理由で条件付き書式の複製に失敗しても全体処理は継続
+                return
+
         total_updates = 0
         total_formats = 0
         total_rows_updated = 0
@@ -110,6 +172,11 @@ class ExcelUpdateWorkbookBlock(ProcessingBlock):
                     src_ws = wb[src]
                     new_ws = wb.copy_worksheet(src_ws)
                     new_ws.title = dst
+                    # 条件付き書式の複製（openpyxl の copy_worksheet では失われる場合があるため補完）
+                    try:
+                        _copy_conditional_formatting(src_ws, new_ws)
+                    except Exception:
+                        pass
                     # placement control
                     idx = op.get("index")
                     pos = (op.get("position") or "").strip().lower()
