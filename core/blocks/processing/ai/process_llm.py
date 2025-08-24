@@ -144,43 +144,45 @@ class ProcessLLMBlock(ProcessingBlock):
         # 動的出力モデル（スキーマ準拠）を生成
         DynamicOutModel = _build_output_model_from_schema(output_schema)
 
-        # Fast-path: evidence_data.answer が厳密なJSONでスキーマに適合する場合はLLMを使わず構造化
-        answer_text: Optional[str] = None
-        if isinstance(evidence, dict) and isinstance(evidence.get("answer"), str):
-            answer_text = evidence.get("answer")  # type: ignore[assignment]
-        if answer_text:
-            try:
-                parsed = json.loads(answer_text)
-                if isinstance(parsed, dict) and "results" in parsed:
-                    results_val = parsed.get("results") or []
-                    summary_val = parsed.get("summary") or {}
-                elif isinstance(parsed, list):
-                    results_val = parsed
-                    summary_val = {}
-                elif isinstance(parsed, dict):
-                    # Single object → wrap as one result
-                    results_val = [parsed]
-                    summary_val = {}
-                else:
-                    results_val = []
-                    summary_val = {}
+        # # Fast-path: evidence_data.answer が厳密なJSONでスキーマに適合する場合はLLMを使わず構造化
+        # answer_text: Optional[str] = None
+        # if isinstance(evidence, dict) and isinstance(evidence.get("answer"), str):
+        #     answer_text = evidence.get("answer")  # type: ignore[assignment]
+        # if answer_text:
+        #     try:
+        #         parsed = json.loads(answer_text)
+        #         if isinstance(parsed, dict) and "results" in parsed:
+        #             results_val = parsed.get("results") or []
+        #             summary_val = parsed.get("summary") or {}
+        #         elif isinstance(parsed, list):
+        #             results_val = parsed
+        #             summary_val = {}
+        #         elif isinstance(parsed, dict):
+        #             # Single object → wrap as one result
+        #             results_val = [parsed]
+        #             summary_val = {}
+        #         else:
+        #             results_val = []
+        #             summary_val = {}
 
-                summary = {
-                    "files": 0,
-                    "tables": 0,
-                    "model": "fastpath-json",
-                    "temperature": 0,
-                    "group_key": inputs.get("group_key"),
-                }
-                try:
-                    keys = list(results_val[0].keys()) if (isinstance(results_val, list) and results_val and isinstance(results_val[0], dict)) else []
-                    export_log({"mode": "fastpath", "results_item_keys": keys, "files": 0, "tables": 0}, ctx=ctx, tag="ai.process_llm")
-                except Exception:
-                    pass
-                return {"results": results_val, "summary": summary_val or summary}
-            except Exception:
-                # fallthrough to LLM path
-                pass
+        #         summary = {
+        #             "files": 0,
+        #             "tables": 0,
+        #             "model": "fastpath-json",
+        #             "temperature": 0,
+        #             "group_key": inputs.get("group_key"),
+        #         }
+        #         try:
+        #             keys = list(results_val[0].keys()) if (isinstance(results_val, list) and results_val and isinstance(results_val[0], dict)) else []
+        #             export_log({"mode": "fastpath", "results_item_keys": keys, "files": 0, "tables": 0}, ctx=ctx, tag="ai.process_llm")
+        #         except Exception:
+        #             pass
+        #         return {"results": results_val, "summary": summary_val or summary}
+        #     except Exception:
+        #         # fallthrough to LLM path
+        #         pass
+        # 上記Fast-pathは無効化中だが、下流のhuman_contentで参照するため初期化
+        answer_text: Optional[str] = None
 
         # LLM 実行のみを許容（キー未設定時はエラー）
         have_llm = bool(os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"))
@@ -242,6 +244,85 @@ class ProcessLLMBlock(ProcessingBlock):
 
                         if b64_val:
                             image_data_urls.append(f"data:{mime};base64,{b64_val}")
+                    elif (mime == "application/pdf" or ext in (".pdf", "pdf")) and len(image_data_urls) < max_images:
+                        # PDF内の埋込画像を抽出
+                        pdf_bytes: Optional[bytes] = None
+                        try:
+                            if isinstance(f.get("bytes"), (bytes, bytearray)):
+                                pdf_bytes = bytes(f.get("bytes"))  # type: ignore[arg-type]
+                            elif isinstance(f.get("base64"), str):
+                                try:
+                                    pdf_bytes = base64.b64decode(str(f.get("base64")))
+                                except Exception:
+                                    pdf_bytes = None
+                            elif isinstance(f.get("bytes"), dict):
+                                bobj = f.get("bytes")
+                                if bobj and bobj.get("__type") == "b64bytes" and isinstance(bobj.get("data"), str):
+                                    try:
+                                        pdf_bytes = base64.b64decode(bobj.get("data"))
+                                    except Exception:
+                                        pdf_bytes = None
+                        except Exception:
+                            pdf_bytes = None
+
+                        if pdf_bytes:
+                            try:
+                                import fitz  # type: ignore
+
+                                with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+                                    seen_xref: set[int] = set()
+                                    for page_index in range(len(doc)):
+                                        if len(image_data_urls) >= max_images:
+                                            break
+                                        page = doc[page_index]
+                                        try:
+                                            img_list = page.get_images(full=True) or []
+                                        except Exception:
+                                            img_list = []
+                                        for img in img_list:
+                                            if len(image_data_urls) >= max_images:
+                                                break
+                                            try:
+                                                xref = int(img[0])
+                                            except Exception:
+                                                continue
+                                            if xref in seen_xref:
+                                                continue
+                                            seen_xref.add(xref)
+                                            try:
+                                                info = doc.extract_image(xref) or {}
+                                                raw: Optional[bytes] = info.get("image") if isinstance(info.get("image"), (bytes, bytearray)) else None  # type: ignore[assignment]
+                                                ext2 = str(info.get("ext") or "").lower()
+                                                mime2: Optional[str]
+                                                if ext2 == "png":
+                                                    mime2 = "image/png"
+                                                elif ext2 in ("jpg", "jpeg"):
+                                                    mime2 = "image/jpeg"
+                                                else:
+                                                    mime2 = None
+
+                                                if raw is None or mime2 is None:
+                                                    # 互換のためPNGに変換
+                                                    try:
+                                                        pm = fitz.Pixmap(doc, xref)
+                                                        if pm.alpha:
+                                                            pm = fitz.Pixmap(fitz.csRGB, pm)
+                                                        raw = pm.tobytes("png")
+                                                        mime2 = "image/png"
+                                                    except Exception:
+                                                        continue
+
+                                                try:
+                                                    b64_img = base64.b64encode(bytes(raw)).decode("ascii")
+                                                    image_data_urls.append(f"data:{mime2};base64,{b64_img}")
+                                                except Exception:
+                                                    continue
+                                            except Exception:
+                                                continue
+                            except Exception:
+                                # PDF解析失敗は無視して継続
+                                print("[warning]PDF解析失敗")
+                                pass
 
             # evidence_data 内の表形式データ（rows など）を抽出
             def _as_rows(name: str, value: Any) -> Optional[Dict[str, Any]]:
