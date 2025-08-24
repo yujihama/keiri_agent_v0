@@ -16,6 +16,9 @@ outputs:
   rows:
     type: array
     description: 変換後の行配列
+  first:
+    type: object
+    description: 変換後の先頭要素（items が空なら null）
   summary:
     type: object
     description: 入力件数と変換件数

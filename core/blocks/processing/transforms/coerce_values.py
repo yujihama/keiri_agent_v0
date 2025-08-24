@@ -116,6 +116,12 @@ class CoerceValuesBlock(ProcessingBlock):
                     replaced += 1
             out_rows.append(row)
 
-        return {"rows": out_rows, "summary": {"input": len(items), "converted": replaced, "specs": len(specs)}}
+        # Provide convenience: first object (when input is a single object list)
+        first_obj = out_rows[0] if out_rows else None
+        return {
+            "rows": out_rows,
+            "first": first_obj,
+            "summary": {"input": len(items), "converted": replaced, "specs": len(specs)},
+        }
 
 
