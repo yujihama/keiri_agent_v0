@@ -256,10 +256,15 @@ class ExcelUpdateWorkbookBlock(ProcessingBlock):
                 ws = _get_ws(name)
                 rows = op.get("rows") or []
                 col_map = op.get("columns") or {}
-                # 末尾行の検出: 指定列群（無ければ全列）で最終非空セルの行
+                scan_columns_opt = op.get("scan_columns")  # 明示的に走査する列（例: ["B","C","D"]）
+                # 末尾行の検出: 指定列群（scan_columns があればそれを優先。無ければ columns の列）で最終非空セルの行
                 def _last_used_row() -> int:
                     scan_cols = []
-                    if isinstance(col_map, dict):
+                    if isinstance(scan_columns_opt, list) and scan_columns_opt:
+                        for v in scan_columns_opt:
+                            if isinstance(v, str) and v:
+                                scan_cols.append(v)
+                    if not scan_cols and isinstance(col_map, dict):
                         for v in col_map.values():
                             if isinstance(v, str) and v:
                                 scan_cols.append(v)

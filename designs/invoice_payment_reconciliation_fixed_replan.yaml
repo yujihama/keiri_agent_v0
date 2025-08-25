@@ -135,33 +135,33 @@ graph:
   policy: null
 - id: write_excel
   description: Excelに書き出す
-  block: excel.write
+  block: excel.update_workbook
   in:
-    cell_updates:
-      sheet: Results
-      cells:
-        A1: サンプル名
-        B1: 一致
-        C1: 請求金額
-        D1: 入金金額
-        E1: 差額
-        F1: コメント
-    column_updates:
-      sheet: Results
-      start_row: 2
-      header_row: 1
-      column_map:
-        サンプル名: A
-        一致: B
-        請求金額: C
-        入金金額: D
-        差額: E
-        コメント: F
-      values: ${prepare_excel_data.excel_rows}
     workbook:
       name: output.xlsx
       bytes: ${extract_workbook.value}
+    operations:
+      - type: update_cells
+        sheet_name: Results
+        cells:
+          A1: サンプル名
+          B1: 一致
+          C1: 請求金額
+          D1: 入金金額
+          E1: 差額
+          F1: コメント
+      - type: append_rows_bottom
+        sheet_name: Results
+        rows: ${prepare_excel_data.excel_rows}
+        columns:
+          サンプル名: A
+          一致: B
+          請求金額: C
+          入金金額: D
+          差額: E
+          コメント: F
+        scan_columns: ["B", "C", "D"]
   out:
     workbook_b64: workbook_b64
     workbook_updated: workbook_updated
-    write_summary: write_summary
+    summary: write_summary

@@ -14,7 +14,7 @@ inputs:
       - { type: move_sheet, sheet_name, index?: 0, position?: first|last, before?: name, after?: name }
       - { type: update_cells, sheet_name, cells: {A1: value, ...} | target: "A1", data: value }
       - { type: append_table, sheet_name, target: "A1", data: list[object]|dict|DataFrame }
-      - { type: append_rows_bottom, sheet_name, rows: list[object], columns: { field: "B" }, note: "rowsをテーブル最下行の次に列レター指定で追記" }
+      - { type: append_rows_bottom, sheet_name, rows: list[object], columns: { field: "B" }, scan_columns?: ["B","C"], note: "rowsをテーブル最下行の次に列レター指定で追記。末尾探索はscan_columns（無指定時はcolumnsの列）で実施" }
       - { type: insert_rows, sheet_name, start_row, count }
       - { type: update_formula, sheet_name, cells: {A1: "=SUM(B:B)", ...} }
       - { type: clear_cells, sheet_name, targets: ["F2", "G2"] }
