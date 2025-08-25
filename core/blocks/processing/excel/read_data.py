@@ -312,6 +312,24 @@ class ExcelReadDataBlock(ProcessingBlock):
                     data_range = ws.iter_rows(values_only=True)
                     use_values_only = True
 
+            def _normalize_header_value(raw: Any, default_name: str) -> str:
+                """ヘッダー文字列の正規化をデフォルトで適用する。
+                - 改行 (\r, \n, \r\n) を削除
+                - 前後の空白を除去
+                - 正規化後が空になった場合はデフォルト名を使用
+                """
+                if raw is None:
+                    return default_name
+                try:
+                    text = str(raw)
+                except Exception:
+                    text = ""
+                # 改行削除
+                text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "")
+                # 前後空白除去
+                text = text.strip()
+                return text if text else default_name
+
             headers: List[str] = []
             records: List[Dict[str, Any]] = []
 
@@ -354,7 +372,7 @@ class ExcelReadDataBlock(ProcessingBlock):
                     else:
                         cells = [getattr(c, "value", c) for c in cells]
                 if current_row == header_row:
-                    headers = [str(c) if c is not None else f"col{idx+1}" for idx, c in enumerate(cells)]
+                    headers = [_normalize_header_value(c, f"col{idx+1}") for idx, c in enumerate(cells)]
                     continue
                 if current_row < header_row:
                     continue
