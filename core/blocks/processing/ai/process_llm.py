@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 import os
 import json
 import base64
+from datetime import date, datetime
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.errors import BlockError, BlockException, ErrorCode, create_input_error, create_external_error, wrap_exception
@@ -32,6 +33,8 @@ _TYPE_MAP: Dict[str, Any] = {
     "int": int,
     "number": float,
     "float": float,
+    "date": date,
+    "datetime": datetime,
     "boolean": bool,
     "bool": bool,
     "any": Any,
@@ -245,7 +248,7 @@ class ProcessLLMBlock(ProcessingBlock):
                         if b64_val:
                             image_data_urls.append(f"data:{mime};base64,{b64_val}")
                     elif (mime == "application/pdf" or ext in (".pdf", "pdf")) and len(image_data_urls) < max_images:
-                        # PDF内の埋込画像を抽出
+                        # PDFを1ページ=1画像にレンダリング
                         pdf_bytes: Optional[bytes] = None
                         try:
                             if isinstance(f.get("bytes"), (bytes, bytearray)):
@@ -270,55 +273,20 @@ class ProcessLLMBlock(ProcessingBlock):
                                 import fitz  # type: ignore
 
                                 with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-                                    seen_xref: set[int] = set()
+                                    # 解像度: 2倍スケール（約144DPI相当）
+                                    scale = 2.0
+                                    mat = fitz.Matrix(scale, scale)
                                     for page_index in range(len(doc)):
                                         if len(image_data_urls) >= max_images:
                                             break
-                                        page = doc[page_index]
                                         try:
-                                            img_list = page.get_images(full=True) or []
+                                            page = doc[page_index]
+                                            pm = page.get_pixmap(matrix=mat)
+                                            png_bytes = pm.tobytes("png")
+                                            b64_img = base64.b64encode(png_bytes).decode("ascii")
+                                            image_data_urls.append(f"data:image/png;base64,{b64_img}")
                                         except Exception:
-                                            img_list = []
-                                        for img in img_list:
-                                            if len(image_data_urls) >= max_images:
-                                                break
-                                            try:
-                                                xref = int(img[0])
-                                            except Exception:
-                                                continue
-                                            if xref in seen_xref:
-                                                continue
-                                            seen_xref.add(xref)
-                                            try:
-                                                info = doc.extract_image(xref) or {}
-                                                raw: Optional[bytes] = info.get("image") if isinstance(info.get("image"), (bytes, bytearray)) else None  # type: ignore[assignment]
-                                                ext2 = str(info.get("ext") or "").lower()
-                                                mime2: Optional[str]
-                                                if ext2 == "png":
-                                                    mime2 = "image/png"
-                                                elif ext2 in ("jpg", "jpeg"):
-                                                    mime2 = "image/jpeg"
-                                                else:
-                                                    mime2 = None
-
-                                                if raw is None or mime2 is None:
-                                                    # 互換のためPNGに変換
-                                                    try:
-                                                        pm = fitz.Pixmap(doc, xref)
-                                                        if pm.alpha:
-                                                            pm = fitz.Pixmap(fitz.csRGB, pm)
-                                                        raw = pm.tobytes("png")
-                                                        mime2 = "image/png"
-                                                    except Exception:
-                                                        continue
-
-                                                try:
-                                                    b64_img = base64.b64encode(bytes(raw)).decode("ascii")
-                                                    image_data_urls.append(f"data:{mime2};base64,{b64_img}")
-                                                except Exception:
-                                                    continue
-                                            except Exception:
-                                                continue
+                                            continue
                             except Exception:
                                 # PDF解析失敗は無視して継続
                                 print("[warning]PDF解析失敗")
