@@ -44,6 +44,32 @@ _logger = logging.getLogger("keiri")
 _logger.propagate = False
 
 
+class _ConsoleSuppressFilter(logging.Filter):
+    """Suppress console output for specific messages while keeping file logs.
+
+    Suppressed substrings are checked against the rendered message via
+    record.getMessage(). If any substring is contained, the record is filtered
+    out for the console handler only.
+    example:
+    KEIRI_SUPPRESS_CONSOLE_MESSAGES=DAG描画の更新に失敗しました。|
+    KEIRI_SUPPRESS_CONSOLE_MESSAGES=DAG描画の更新に失敗しました。|DAG描画の更新に失敗しました。
+    """
+
+    def __init__(self, suppressed_substrings: list[str] | None = None) -> None:
+        super().__init__()
+        self._suppressed = suppressed_substrings or []
+
+    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        for s in self._suppressed:
+            if s and s in msg:
+                return False
+        return True
+
+
 def configure_logging(log_dir: str | None = None, *, level: str | None = None, console: bool = True) -> None:
     # Idempotent: clear only our handlers
     if _logger.handlers:
@@ -73,6 +99,15 @@ def configure_logging(log_dir: str | None = None, *, level: str | None = None, c
         ch.setLevel(lvl)
         ch.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
         ch.addFilter(filt)
+        # Default suppressed messages for console (file logging remains intact)
+        default_suppressed = [
+            "DAG描画の更新に失敗しました。",
+        ]
+        # Allow opt-in additional suppression via env var (pipe-delimited)
+        extra = os.getenv("KEIRI_SUPPRESS_CONSOLE_MESSAGES", "")
+        if extra:
+            default_suppressed.extend([s for s in extra.split("|") if s])
+        ch.addFilter(_ConsoleSuppressFilter(default_suppressed))
         _logger.addHandler(ch)
 
 
