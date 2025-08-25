@@ -124,13 +124,48 @@ graph:
       id: extract_single_result
       version: 0.1.0
       graph:
-      - id: pick_results
+      - id: pick_sample
         block: transforms.pick
         in:
           source: ${vars.result_dict}
-          path: results
+          path: results.サンプル名
         out:
-          value: row_data
+          value: サンプル名
+      - id: pick_match
+        block: transforms.pick
+        in:
+          source: ${vars.result_dict}
+          path: results.一致
+        out:
+          value: 一致
+      - id: pick_inv_amt
+        block: transforms.pick
+        in:
+          source: ${vars.result_dict}
+          path: results.請求金額
+        out:
+          value: 請求金額
+      - id: pick_pay_amt
+        block: transforms.pick
+        in:
+          source: ${vars.result_dict}
+          path: results.入金金額
+        out:
+          value: 入金金額
+      - id: pick_diff
+        block: transforms.pick
+        in:
+          source: ${vars.result_dict}
+          path: results.差額
+        out:
+          value: 差額
+      - id: pick_comment
+        block: transforms.pick
+        in:
+          source: ${vars.result_dict}
+          path: results.コメント
+        out:
+          value: コメント
   call: null
   policy: null
 - id: write_excel
