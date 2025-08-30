@@ -3,6 +3,8 @@
   "journal_csv": "tests/data/retirement_data/退職給付金勘定元帳.csv",
   "salary_csv": "tests/data/retirement_data/給与明細一覧表.csv",
   "ledger_csv": "tests/data/retirement_data/退職給付金勘定元帳.csv",
+  "salary_xlsx": "tests/data/retirement_data/給与明細一覧表_pivot.xlsx",
+  "ledger_xlsx": "tests/data/retirement_data/退職給付金勘定元帳.xlsx",
   "workbook": "tests/data/retirement_data/退職給付ワークブック.xlsx",
   "po_csv": "tests/data/po_policy/po_data.csv",
   "invoices_csv": "tests/data/invoices/invoices.csv"

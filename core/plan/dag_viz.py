@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+import re
 import textwrap
 
 import matplotlib
@@ -36,17 +37,26 @@ def generate_flow_html(plan: Plan, node_states: Dict[str, str] | None = None, in
         return "<div>No nodes to display</div>"
     
     node_states = node_states or {n.id: "pending" for n in nodes_list}
-    
+
+    def _slug(s: str) -> str:
+        try:
+            return re.sub(r"[^A-Za-z0-9_-]+", "-", str(s))
+        except Exception:
+            return ""
+
     # CSS styles for modern look
     styles = textwrap.dedent(
         """
         <style>
             .flow-container {
                 display: flex;
-                gap: 20px;
-                padding: 20px;
-                overflow-x: auto;
-                align-items: center;
+                flex-wrap: wrap;
+                gap: 12px 20px;
+                padding: 16px 20px;
+                overflow: auto;
+                align-items: stretch;
+                align-content: flex-start;
+                max-height: 220px;
                 background: #f8f9fa;
                 border-radius: 12px;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -54,7 +64,8 @@ def generate_flow_html(plan: Plan, node_states: Dict[str, str] | None = None, in
 
             .flow-node {
                 position: relative;
-                min-width: 160px;
+                flex: 0 0 220px;
+                min-width: 200px;
                 padding: 16px 20px;
                 background: white;
                 border-radius: 12px;
@@ -134,6 +145,9 @@ def generate_flow_html(plan: Plan, node_states: Dict[str, str] | None = None, in
                 display: none;
             }
 
+            /* Wrap-friendly: always hide arrows to avoid misalignment across rows */
+            .flow-container .flow-arrow { display: none !important; }
+
             .status-icon {
                 position: absolute;
                 top: -10px;
@@ -173,8 +187,16 @@ def generate_flow_html(plan: Plan, node_states: Dict[str, str] | None = None, in
             "skipped": "➜"
         }
         
+        running_attr = ' data-running="1"' if state == "running" else ""
+        node_id_safe = _slug(node.id)
+        attrs = (
+            f'class="flow-node {state}" '
+            f'data-node-id="{node.id}" '
+            f'data-state="{state}" '
+            f'id="flow-node-{node_id_safe}"{running_attr}'
+        )
         node_html = (
-            f'<div class="flow-node {state}">'
+            f'<div {attrs}>'
             f'<div class="status-icon {state}">{status_icons.get(state, "?")}</div>'
             f'<div class="node-id">{node.id}</div>'
         )
@@ -189,7 +211,9 @@ def generate_flow_html(plan: Plan, node_states: Dict[str, str] | None = None, in
         html_nodes.append(node_html)
     
     # Combine everything
-    return styles + '\n' + '<div class="flow-container">' + ''.join(html_nodes) + '</div>'
+    _plan_id_safe = _slug(getattr(plan, "id", ""))
+    container_id = f'flow-container-{_plan_id_safe}'
+    return styles + '\n' + f'<div class="flow-container" id="{container_id}">' + ''.join(html_nodes) + '</div>'
 
 
 # Try to configure a Japanese-capable font to avoid garbled labels

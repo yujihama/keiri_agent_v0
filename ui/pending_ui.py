@@ -82,10 +82,8 @@ def render_and_maybe_submit_pending_ui(plan_path, registry: BlockRegistry, runne
         from core.plan.dag_viz import generate_flow_html
         try:
             states_init = {n.id: "pending" for n in plan_for_pending.graph} if plan_for_pending else {}
-            html_init = generate_flow_html(plan_for_pending, states_init, include_loop_nodes=False) if plan_for_pending else ""
-            if html_init:
-                area = placeholder or st
-                area.markdown(html_init, unsafe_allow_html=True)
+            if plan_for_pending:
+                render_flow_html(plan_for_pending, states_init, include_loop_nodes=False, placeholder=placeholder or st)
         except Exception:
             pass
         return
@@ -102,9 +100,7 @@ def render_and_maybe_submit_pending_ui(plan_path, registry: BlockRegistry, runne
                 succ = init_success_nodes_namespace(plan_for_pending.id)
                 for nid in succ:
                     _states[str(nid)] = "success"
-                html = generate_flow_html(plan_for_pending, _states, include_loop_nodes=False)
-                area = placeholder or st
-                area.markdown(html, unsafe_allow_html=True)
+                render_flow_html(plan_for_pending, _states, include_loop_nodes=False, placeholder=placeholder or st)
             except Exception as e:
                 ulog.warn("フロー図の表示に失敗しました。", e)
 
@@ -163,9 +159,7 @@ def render_and_maybe_submit_pending_ui(plan_path, registry: BlockRegistry, runne
                         st.session_state[SessionKeys.flow_success(plan_for_pending.id)] = succ
                         for nid in succ:
                             _states2[str(nid)] = "success"
-                        html2 = generate_flow_html(plan_for_pending, _states2, include_loop_nodes=False)
-                        area = placeholder or st
-                        area.markdown(html2, unsafe_allow_html=True)
+                        render_flow_html(plan_for_pending, _states2, include_loop_nodes=False, placeholder=placeholder or st)
                     except Exception:
                         pass
                 st.success("入力を保存しました。『実行/再開』を押して続きから再開してください。")

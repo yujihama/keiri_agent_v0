@@ -12,4 +12,8 @@ class SessionKeys:
     def flow_success(plan_id: str) -> str:
         return f"flow_success::{plan_id}"
 
+    @staticmethod
+    def flow_last_render(plan_id: str) -> str:
+        return f"flow_last_render::{plan_id}"
+
 

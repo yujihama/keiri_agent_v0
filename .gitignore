@@ -7,3 +7,4 @@ __pycache__/
 runs/*
 .pytest_cache/*
 .cursor/*
+.serena/*

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flow Scroll Test</title>
+    <style>
+        body {
+            font-family: 'Yu Gothic UI', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        .flow-root {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .debug-panel {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-pending { background: #6c757d; }
+        .status-running { background: #007bff; animation: pulse 1s infinite; }
+        .status-success { background: #28a745; }
+        .status-error { background: #dc3545; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Flow visualization styles */
+        .flow-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 20px;
+            padding: 16px 20px;
+            overflow: auto;
+            align-items: stretch;
+            align-content: flex-start;
+            max-height: 300px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .flow-node {
+            position: relative;
+            flex: 0 0 220px;
+            min-width: 200px;
+            padding: 16px 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 3px solid #e0e0e0;
+        }
+
+        .flow-node.pending {
+            border-color: #e0e0e0;
+            background: #ffffff;
+        }
+
+        .flow-node.running {
+            border-color: #2196F3;
+            background: #E3F2FD;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .flow-node.success {
+            border-color: #4CAF50;
+            background: #E8F5E9;
+        }
+
+        .flow-node.error {
+            border-color: #F44336;
+            background: #FFEBEE;
+        }
+
+        .flow-node.skipped {
+            border-color: #FF9800;
+            background: #FFF3E0;
+        }
+
+        .status-icon {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .status-icon.pending { background: #9E9E9E; }
+        .status-icon.running { background: #2196F3; }
+        .status-icon.success { background: #4CAF50; }
+        .status-icon.error { background: #F44336; }
+        .status-icon.skipped { background: #FF9800; }
+
+        .node-id {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .node-description {
+            font-size: 12px;
+            color: #666;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Flow Scroll Test</h1>
+        <p>このページでフローの自動スクロール機能をテストします。ブラウザの開発者ツールのコンソールを開いてデバッグ情報を確認してください。</p>
+
+        <div class="debug-panel" id="debug-panel">
+            <strong>Debug Log:</strong><br>
+            ページが読み込まれました...<br>
+        </div>
+
+        <button onclick="simulateNodeChange('node_2')">ノード2を実行中に変更</button>
+        <button onclick="simulateNodeChange('node_5')">ノード5を実行中に変更</button>
+        <button onclick="simulateNodeChange('node_8')">ノード8を実行中に変更</button>
+        <button onclick="clearDebug()">デバッグログをクリア</button>
+
+        <div class="flow-root" id="flow-root">
+            <div class="flow-container" id="flow-container-test_plan">
+                <div class="flow-node pending" data-node-id="node_0" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_0</div>
+                    <div class="node-description">初期ノード</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_1" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_1</div>
+                    <div class="node-description">データ読み込み</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_2" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_2</div>
+                    <div class="node-description">データ処理</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_3" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_3</div>
+                    <div class="node-description">検証処理</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_4" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_4</div>
+                    <div class="node-description">中間チェック</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_5" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_5</div>
+                    <div class="node-description">計算処理</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_6" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_6</div>
+                    <div class="node-description">集計処理</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_7" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_7</div>
+                    <div class="node-description">レポート生成</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_8" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_8</div>
+                    <div class="node-description">最終確認</div>
+                </div>
+                <div class="flow-node pending" data-node-id="node_9" data-state="pending">
+                    <div class="status-icon pending">⏸</div>
+                    <div class="node-id">node_9</div>
+                    <div class="node-description">完了処理</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // デバッグログ関数
+        function logDebug(message) {
+            const panel = document.getElementById('debug-panel');
+            const now = new Date().toLocaleTimeString();
+            panel.innerHTML += `[${now}] ${message}<br>`;
+            panel.scrollTop = panel.scrollHeight;
+            console.log(`[flow-test] ${message}`);
+        }
+
+        // ノード状態変更関数
+        function simulateNodeChange(nodeId) {
+            logDebug(`ノード ${nodeId} の状態を変更します`);
+
+            // すべてのノードをリセット
+            document.querySelectorAll('.flow-node').forEach(node => {
+                node.className = 'flow-node pending';
+                node.setAttribute('data-state', 'pending');
+                node.querySelector('.status-icon').className = 'status-icon pending';
+                node.querySelector('.status-icon').textContent = '⏸';
+                node.removeAttribute('data-running');
+            });
+
+            // 指定ノードを実行中に変更
+            const targetNode = document.querySelector(`[data-node-id="${nodeId}"]`);
+            if (targetNode) {
+                targetNode.className = 'flow-node running';
+                targetNode.setAttribute('data-state', 'running');
+                targetNode.setAttribute('data-running', '1');
+                targetNode.querySelector('.status-icon').className = 'status-icon running';
+                targetNode.querySelector('.status-icon').textContent = '▶';
+                logDebug(`ノード ${nodeId} を実行中に設定しました`);
+            } else {
+                logDebug(`ノード ${nodeId} が見つかりません`);
+            }
+        }
+
+        // デバッグログクリア関数
+        function clearDebug() {
+            document.getElementById('debug-panel').innerHTML = '<strong>Debug Log:</strong><br>ログをクリアしました<br>';
+        }
+
+        // ページ読み込み時のログ
+        logDebug('ページ読み込み完了');
+
+        // 実際のflow_viz.jsのJavaScriptをここに埋め込み
+        // (テスト用に簡略化したバージョン)
+        (function(){
+            const CID = "flow-container-test_plan";
+            const DBG = true;
+
+            function center(){
+                try {
+                    if (DBG) logDebug('center() called for CID: ' + CID);
+
+                    const r = document.getElementById('flow-root');
+                    if (DBG) logDebug('flow-root element: ' + (r ? 'found' : 'not found'));
+
+                    const c = r && (document.getElementById(CID) || r.querySelector('.flow-container'));
+                    if (DBG) logDebug('container element: ' + (c ? 'found' : 'not found') + ' CID: ' + CID);
+
+                    if (!c) {
+                        if (DBG) logDebug('container not found, skipping scroll');
+                        return;
+                    }
+
+                    const hasOverflow = c.scrollWidth > c.clientWidth || c.scrollHeight > c.clientHeight;
+                    if (DBG) logDebug('has overflow: ' + hasOverflow + ' scrollWidth: ' + c.scrollWidth + ' clientWidth: ' + c.clientWidth);
+
+                    let t = c.querySelector('.flow-node[data-running="1"]') || c.querySelector('.flow-node.running');
+                    if (DBG) logDebug('running node found: ' + (t ? 'yes' : 'no'));
+
+                    if (!t) {
+                        const a = c.querySelectorAll('.flow-node[data-state="success"]');
+                        t = a.length ? a[a.length-1] : null;
+                        if (DBG) logDebug('success nodes found: ' + a.length + ' using last: ' + (t ? 'yes' : 'no'));
+                    }
+
+                    if (!t) {
+                        if (DBG) logDebug('no target node found, skipping scroll');
+                        return;
+                    }
+
+                    if (DBG) logDebug('target node: ' + t.getAttribute('data-node-id'));
+
+                    const cr = c.getBoundingClientRect();
+                    const tr = t.getBoundingClientRect();
+
+                    let dstL = c.scrollLeft + (tr.left - cr.left) - (c.clientWidth - tr.width)/2;
+                    let dstT = c.scrollTop + (tr.top - cr.top) - (c.clientHeight - tr.height)/2;
+
+                    dstL = Math.max(0, Math.min(dstL, c.scrollWidth - c.clientWidth));
+                    dstT = Math.max(0, Math.min(dstT, c.scrollHeight - c.clientHeight));
+
+                    if (DBG) logDebug('scroll to: ' + dstL + ', ' + dstT);
+
+                    if (c.scrollTo) {
+                        c.scrollTo({left: dstL, top: dstT, behavior: 'smooth'});
+                        if (DBG) logDebug('used scrollTo with smooth behavior');
+                    } else {
+                        c.scrollLeft = dstL;
+                        c.scrollTop = dstT;
+                        if (DBG) logDebug('used direct scroll properties');
+                    }
+
+                    try {
+                        t.style.outline = '2px dashed rgba(33,150,243,.6)';
+                        t.style.outlineOffset='2px';
+                        if (DBG) logDebug('applied outline to target node');
+                    } catch(e) {
+                        if (DBG) logDebug('failed to apply outline: ' + e);
+                    }
+
+                } catch(e) {
+                    if (DBG) logDebug('center() error: ' + e);
+                }
+            }
+
+            function setup(){
+                try {
+                    if (DBG) logDebug('setup() called for CID: ' + CID);
+
+                    const r = document.getElementById('flow-root');
+                    const c = r && (document.getElementById(CID) || r.querySelector('.flow-container'));
+
+                    if (DBG) logDebug('setup - flow-root: ' + (r ? 'found' : 'not found') + ' container: ' + (c ? 'found' : 'not found'));
+
+                    if (!c) {
+                        if (DBG) logDebug('setup failed - container not found');
+                        return;
+                    }
+
+                    if (DBG) logDebug('setup successful, starting center() calls');
+
+                    center();
+
+                    const ob = new MutationObserver(function(mutations){
+                        if (DBG) logDebug('mutation observed: ' + mutations.length + ' changes');
+                        clearTimeout(center._t);
+                        center._t = setTimeout(center, 60);
+                    });
+
+                    try {
+                        ob.observe(c, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+                        if (DBG) logDebug('MutationObserver attached');
+                    } catch(e) {
+                        if (DBG) logDebug('MutationObserver attach failed: ' + e);
+                    }
+
+                    let n = 0;
+                    (function tick(){
+                        if (n++ < 20) {
+                            if (DBG) logDebug('tick call ' + n);
+                            center();
+                            setTimeout(tick, 50);
+                        }
+                    })();
+
+                    window.addEventListener('resize', function(){
+                        if (DBG) logDebug('window resize detected');
+                        clearTimeout(center._t);
+                        center._t = setTimeout(center, 100);
+                    });
+
+                    if (DBG) logDebug('setup completed');
+
+                } catch(e) {
+                    if (DBG) logDebug('setup() error: ' + e);
+                }
+            }
+
+            if (DBG) logDebug('script loaded, document.readyState: ' + document.readyState);
+
+            function initFlowScroll(){
+                if (DBG) logDebug('initFlowScroll called');
+                setup();
+            }
+
+            if (document.readyState === 'complete') {
+                if (DBG) logDebug('document already complete, calling setup immediately');
+                setTimeout(initFlowScroll, 0);
+            } else if (document.readyState === 'interactive') {
+                if (DBG) logDebug('document interactive, calling setup soon');
+                setTimeout(initFlowScroll, 0);
+            } else {
+                if (DBG) logDebug('document loading, waiting for events');
+                window.addEventListener('DOMContentLoaded', function(){
+                    if (DBG) logDebug('DOMContentLoaded fired');
+                    setTimeout(initFlowScroll, 0);
+                });
+                window.addEventListener('load', function(){
+                    if (DBG) logDebug('load event fired');
+                    setTimeout(initFlowScroll, 0);
+                });
+            }
+
+        })();
+    </script>
+</body>
+</html>

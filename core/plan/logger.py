@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from pathlib import Path
@@ -23,6 +26,76 @@ class _RunLogInfo:
     seq: int = 0
 
 
+def _get_desired_log_mode() -> int:
+    """Resolve desired file mode for JSONL logs.
+
+    - Uses env `KEIRI_LOG_FILE_MODE` if set (accepts forms like "664", "0o664").
+    - Defaults to 0o664 (rw-rw-r--).
+    """
+    v = os.getenv("KEIRI_LOG_FILE_MODE")
+    if v:
+        try:
+            sv = v.strip().lower()
+            # If explicit base prefix provided, respect it via base=0
+            if sv.startswith(("0o", "0x", "0b", "0")):
+                return int(v, 0)
+            # Otherwise, interpret as octal like chmod notation (e.g., "664")
+            return int(v, 8)
+        except Exception:
+            pass
+    return 0o664
+
+
+def _apply_windows_acl(target: Path) -> None:
+    """Optionally widen ACLs on Windows using icacls if KEIRI_LOG_ACL_SPEC is set.
+
+    Example: KEIRI_LOG_ACL_SPEC="Users:(R)" or "Everyone:(R)".
+    """
+    spec = os.getenv("KEIRI_LOG_ACL_SPEC")
+    if not spec:
+        return
+    try:
+        subprocess.run([
+            "icacls",
+            str(target),
+            "/grant",
+            spec,
+        ], check=False, capture_output=True)
+    except Exception:
+        pass
+
+
+def _set_file_permissions(path: Path) -> None:
+    """Best-effort permission setting for created JSONL files.
+
+    - POSIX: chmod to desired mode (default 0o664 unless env overrides)
+    - Windows: use icacls when KEIRI_LOG_ACL_SPEC is set; otherwise set RW attribute
+    """
+    try:
+        if os.name == "nt":
+            _apply_windows_acl(path)
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        else:
+            os.chmod(path, _get_desired_log_mode())
+    except Exception:
+        pass
+
+
+def _set_dir_permissions(path: Path) -> None:
+    """Best-effort permission setting for directory containing logs.
+
+    - POSIX: chmod 0o775 to allow group traverse/read.
+    - Windows: use icacls when KEIRI_LOG_ACL_SPEC is set.
+    """
+    try:
+        if os.name == "nt":
+            _apply_windows_acl(path)
+        else:
+            os.chmod(path, 0o775)
+    except Exception:
+        pass
+
+
 def register_log_path(run_id: str, plan_id: str, path: Path, parent_run_id: Optional[str] = None) -> None:
     """Register JSONL log file path for a run.
 
@@ -31,6 +104,16 @@ def register_log_path(run_id: str, plan_id: str, path: Path, parent_run_id: Opti
     """
     with _RUN_LOG_PATHS_LOCK:
         _RUN_LOG_PATHS[run_id] = _RunLogInfo(plan_id=plan_id, path=path, parent_run_id=parent_run_id)
+    # Ensure file exists and adjust permissions immediately upon registration
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _set_dir_permissions(path.parent)
+        if not path.exists():
+            path.touch(exist_ok=True)
+        _set_file_permissions(path)
+    except Exception:
+        # Best-effort; logging should proceed even if this step fails
+        pass
 
 
 def _lookup(run_id: str) -> Optional[_RunLogInfo]:
@@ -135,4 +218,20 @@ def log_metric(
         event["node"] = node_id
     write_event(rid, event)
 
+
+# ------------------ Introspection helpers (for UI) ------------------
+def get_log_path_for_run(run_id: str) -> Optional[Path]:
+    """Return the JSONL log path for a given run_id if registered in-process.
+
+    UI から最新実行のログファイルを開く用途。プロセス内で登録済みの
+    ランに対してのみ有効（プロセス再起動後は None）。
+    """
+    info = _lookup(run_id)
+    return info.path if info else None
+
+
+def get_plan_id_for_run(run_id: str) -> Optional[str]:
+    """Return the plan id for a given run_id if available."""
+    info = _lookup(run_id)
+    return info.plan_id if info else None
 

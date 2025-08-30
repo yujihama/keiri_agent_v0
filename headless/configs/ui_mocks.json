@@ -2,10 +2,8 @@
   "ui.interactive_input": {
     "upload_files": {
       "collected_data": {
-        "employees_csv": "auto_resolve",
-        "journal_csv": "auto_resolve",
-        "salary_csv": "auto_resolve",
-        "ledger_csv": "auto_resolve",
+        "salary_xlsx": "auto_resolve",
+        "ledger_xlsx": "auto_resolve",
         "workbook": "auto_resolve"
       },
       "approved": true,

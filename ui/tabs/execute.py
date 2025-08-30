@@ -20,6 +20,8 @@ from ui.workbook_artifacts import (
     render_workbook_downloads,
 )
 from ui.widget_utils import clear_ui_widget_state_for_plan
+from core.plan.logger import get_log_path_for_run
+from ui.log_utils import read_jsonl, build_summary_input_text, summarize_with_llm
 
 
 def _format_event_message(ev: dict) -> tuple[str, str]:
@@ -86,14 +88,22 @@ def _execute_run(plan_path, registry: BlockRegistry, *, edited_vars: dict | None
     def on_event(ev):
         events_for_dag.append(ev)
         et = ev.get("type")
-        if et in {"node_start", "node_finish", "node_skip", "error", "ui_wait", "ui_submit", "ui_reuse", "loop_start", "loop_finish", "loop_iter_start"}:
+        if et in {"node_start", "node_finish", "node_skip", "error", "ui_wait", "ui_submit", "ui_reuse", "loop_start", "loop_finish", "loop_iter_start", "loop_iter_finish", "finish"}:
             try:
                 from core.plan.dag_viz import compute_node_states
                 states = compute_node_states(plan, events_for_dag)
                 succ = persist_success_nodes(plan.id, states)
                 for nid in list(succ):
                     states[str(nid)] = "success"
-                render_flow_html(plan, states, include_loop_nodes=False, placeholder=dag_area)
+                # Throttle updates to reduce flicker; force final render on finish
+                throttle = None if et == "finish" else 250
+                render_flow_html(
+                    plan,
+                    states,
+                    include_loop_nodes=False,
+                    placeholder=dag_area,
+                    throttle_ms=throttle,
+                )
             except Exception as e:
                 ulog.warn("DAG描画の更新に失敗しました。", e, user=False)
         if et in {"node_finish", "loop_finish", "subflow_finish", "ui_submit", "ui_reuse"}:
@@ -148,7 +158,7 @@ def _execute_run(plan_path, registry: BlockRegistry, *, edited_vars: dict | None
 
     progress.progress(1.0, text="完了")
     with st.expander("結果の詳細(JSON)", expanded=False):
-        st.json(results)
+        st.json(results, expanded=False)
 
     st.session_state[SessionKeys.execute_requested] = False
     st.session_state[SessionKeys.allow_pending_ui_render] = True
@@ -177,6 +187,70 @@ def _execute_run(plan_path, registry: BlockRegistry, *, edited_vars: dict | None
     except Exception as e:
         ulog.warn("base64成果物の描画に失敗しました。", e, user=False)
 
+    # --- 実行結果サマリー（ログ要約） ---
+    try:
+        st.divider()
+        st.subheader("実行結果サマリー")
+
+        rid = st.session_state.get(SessionKeys.last_run_id)
+        log_path = None
+        if rid:
+            try:
+                log_path = get_log_path_for_run(rid)
+            except Exception:
+                log_path = None
+        if not log_path:
+            try:
+                plan_dir = (runner.runs_dir / plan.id)
+                # run_id に一致するファイルを優先
+                if rid:
+                    cand = plan_dir / f"{rid}.jsonl"
+                    if cand.exists():
+                        log_path = cand
+                if not log_path and plan_dir.exists():
+                    files = sorted(plan_dir.glob("*.jsonl"), reverse=True)
+                    if files:
+                        log_path = files[0]
+            except Exception:
+                log_path = None
+
+        if log_path and Path(log_path).exists():
+            events = read_jsonl(Path(log_path))
+            summary_input = build_summary_input_text(events, results if isinstance(results, dict) else None)
+            try:
+                summary = summarize_with_llm(summary_input)
+                st.markdown(f"**概要**: {summary.overview}")
+                if getattr(summary, "highlights", None):
+                    st.markdown("**ハイライト**")
+                    for item in summary.highlights:
+                        st.write(f"- {item}")
+                if getattr(summary, "errors", None):
+                    if summary.errors:
+                        st.markdown("**エラー**")
+                        try:
+                            items = [e.model_dump() for e in summary.errors]  # pydantic v2
+                        except Exception:
+                            try:
+                                items = [e.dict() for e in summary.errors]  # pydantic v1 fallback
+                            except Exception:
+                                items = summary.errors  # 最後の手段
+                        st.json(items)
+                if getattr(summary, "next_actions", None):
+                    if summary.next_actions:
+                        st.markdown("**次のアクション**")
+                        for item in summary.next_actions:
+                            st.write(f"- {item}")
+            except Exception as _sum_err:
+                ulog.warn("要約生成に失敗しました。整形ログを表示します。", _sum_err, user=False)
+                st.text_area("要約入力（ログ+結果テキスト抜粋）", value=summary_input, height=240)
+
+            # with st.expander("要約入力（ログ+結果テキスト）", expanded=False):
+            #     st.text_area("summary_input", value=summary_input, height=160)
+        else:
+            st.info("ログファイルが見つからないため、サマリーを表示できません。")
+    except Exception as _e:
+        ulog.warn("実行サマリーの生成に失敗しました。", _e, user=False)
+
 
 def render(registry: BlockRegistry) -> None:
     st.subheader("業務実施")
@@ -194,7 +268,8 @@ def render(registry: BlockRegistry) -> None:
 
     dag_area = st.empty()
     try:
-        if plan_path:
+        # 実行要求中や実行中は初期プレビューを描画しない（実行開始時のランニングノード表示を優先）
+        if plan_path and not st.session_state.get(SessionKeys.execute_requested) and not st.session_state.get(SessionKeys.run_in_progress):
             plan_preview_for_dag = load_plan(plan_path)
             succ = init_success_nodes_namespace(plan_preview_for_dag.id)
             states0 = {str(nid): "success" for nid in succ}

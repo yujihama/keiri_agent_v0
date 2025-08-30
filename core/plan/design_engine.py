@@ -192,6 +192,30 @@ def _normalize_documents_text(docs: Optional[List[str]]) -> List[str]:
     return out
 
 
+def generate_plan(
+    instruction: str,
+    documents_text: Optional[List[str]],
+    registry: BlockRegistry,
+    options: Optional[DesignEngineOptions] = None,
+    selected_templates: Optional[List[str]] = None,
+    apply_mode: str = "llm-only",
+    hints_vars: Optional[Dict[str, Any]] = None,
+) -> GeneratedPlan:
+    """Public API: Generate a plan using the LLM pathway.
+
+    Notes:
+    - `selected_templates` と `apply_mode` は将来拡張用の引数で、現行実装では LLM 直接生成を使用します。
+    - LLM キーが未設定の場合は内部で例外が発生する可能性があります（テスト側で skip される想定）。
+    """
+    # 現状は LLM 直接生成のみを実装
+    return _generate_plan_llm(
+        instruction=instruction,
+        documents_text=documents_text,
+        registry=registry,
+        options=options,
+        hints_vars=hints_vars,
+    )
+
 def _validate_skeleton(skeleton: "PlanSkeleton", registry: BlockRegistry) -> List[str]:
     errors: List[str] = []
     seen: set[str] = set()

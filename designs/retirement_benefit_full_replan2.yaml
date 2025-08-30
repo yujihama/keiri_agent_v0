@@ -24,17 +24,6 @@ graph:
         - { id: workbook, type: file, label: "退職給付ワークブック.xlsx", required: true, description: "テンプレート/直前期のExcelをアップロード", accept: ".xlsx" }
     out:
       collected_data: uploaded
-  # 0.5) 給与明細CSVの形式選択（縦持ち or 横持ちピボット）
-  # - id: select_salary_format
-  #   description: 給与明細のCSV形式を選択
-  #   block: ui.interactive_input
-  #   in:
-  #     mode: inquire
-  #     message: "給与明細CSVの形式を選択してください"
-  #     requirements:
-  #       - { id: salary_format, type: select, label: "給与明細形式", options: ["normal","pivot"], default: "normal", required: true }
-  #   out:
-  #     collected_data: format
   # 0) 四半期の入力（UI）
   - id: select_quarter
     description: 会計年度と四半期を入力
@@ -48,12 +37,24 @@ graph:
     out:
       collected_data: qin
 
+  # 0.1) qin の fiscal_year を数値へ型変換
+  - id: coerce_qin
+    description: 入力UIの会計年度を number へ型変換
+    block: transforms.coerce_values
+    in:
+      items:
+        - ${select_quarter.qin}
+      specs:
+        - { field: "fiscal_year", type: "number" }
+    out:
+      first: qin_typed
+
   # 1) 四半期から期間・シート名・1Q判定を算出
   - id: compute_q
     description: 四半期から期間・シート名・1Q判定を算出
     block: transforms.compute_fiscal_quarter
     in:
-      fiscal_year: ${select_quarter.qin.fiscal_year}
+      fiscal_year: ${coerce_qin.qin_typed.fiscal_year}
       quarter: ${select_quarter.qin.quarter}
       start_month: 4
     out:
@@ -62,23 +63,6 @@ graph:
       target_sheet_name: target_sheet_name
       template_sheet_name: template_sheet_name
       quarter_label: quarter_label
-
-  # 1) 給与明細表・退職給付引当元帳のExcel読み込み
-  # 1-a) 縦持ち（通常）Excel の読み込み
-  - id: read_salary
-    description: 給与明細Excelを読み込み（縦持ち）
-    block: excel.read_data
-    in:
-      workbook:
-        name: "給与明細一覧表.xlsx"
-        bytes: ${upload_files.uploaded.salary_xlsx}
-      mode: single
-      read_config:
-        header_row: 1
-        sheets:
-          - { name: "Sheet1", header_row: 1 }
-    out:
-      rows: salary_rows_raw
 
   # 1-b) 横持ち（ピボット）Excel の読み込み
   - id: read_salary_pivot
@@ -92,20 +76,32 @@ graph:
       read_config:
         header_row: 1
         sheets:
-          - { name: "Sheet1", header_row: 1 }
+          - { name: "給与明細一覧表_pivot", header_row: 1 }
     out:
       rows: salary_pivot_rows_raw
 
-  # 1-b-1) 先頭列ヘッダの正規化（Excelの空セル→col1 になるケースを空文字に揃える）
+  # 1-b-1) 先頭列ヘッダの正規化（Excelの空セル→col1 になるケースを「項目」に揃える）
   - id: normalize_pivot_first_col
-    description: ピボットシートの先頭列ヘッダを空文字に正規化
+    description: ピボットシートの先頭列ヘッダを「項目」に正規化
     block: transforms.rename_fields
     in:
       items: ${read_salary_pivot.salary_pivot_rows_raw}
       rename:
-        col1: ""
+        col1: "項目"
+        "": "項目"  # 空のヘッダーも「項目」に変換
     out:
       rows: salary_pivot_rows_norm
+
+  # 1-b-1-debug) デバッグ: 正規化後のデータを確認
+  # - id: debug_pivot_normalized
+  #   description: 正規化後のピボットデータをデバッグ出力
+  #   block: transforms.pick
+  #   in:
+  #     source: ${normalize_pivot_first_col.salary_pivot_rows_norm}
+  #     path: ""
+  #     return: object
+  #   out:
+  #     value: debug_normalized_data
 
   # 1-c) 横持ち→縦持ちへ変換（unpivot -> pivot）
   - id: unpivot_salary
@@ -113,7 +109,7 @@ graph:
     block: table.unpivot
     in:
       rows: ${normalize_pivot_first_col.salary_pivot_rows_norm}
-      id_vars: ""
+      id_vars: "項目"
       var_name: "氏名"
       value_name: "value"
     out:
@@ -127,7 +123,7 @@ graph:
     in:
       rows: ${unpivot_salary.salary_unpivot_rows}
       index: "氏名"
-      columns: ""
+      columns: "項目"
       values: "value"
       aggfunc: first
       flatten_multiindex: true
@@ -163,7 +159,7 @@ graph:
     block: transforms.flatten_items
     in:
       results_list:
-        - { items: "${read_salary.salary_rows_raw}" }
+        # - { items: "${read_salary.salary_rows_raw}" }
         - { items: "${pivot_salary_to_rows.salary_rows_raw}" }
     out:
       items: salary_rows
@@ -179,7 +175,7 @@ graph:
       read_config:
         header_row: 1
         sheets:
-          - { name: "Sheet1", header_row: 1 }
+          - { name: "退職給付金勘定元帳", header_row: 1 }
     out:
       rows: ledger_rows
 
@@ -263,13 +259,13 @@ graph:
           sheet_name: "${compute_q.target_sheet_name}"
           condition: ${compute_q.is_q1}
           cells:
-            "B2": "${select_quarter.qin.fiscal_year}"
+            "B2": "${coerce_qin.qin_typed.fiscal_year}"
         # 4-6: 第1四半期のみ K列の式内 "XXXX.3" の XXXX を当年度に置換
         - type: replace_in_formulas
           sheet_name: "${compute_q.target_sheet_name}"
           range: "K:K"
           search: "([0-9]{4})\\.3"
-          replace: "${select_quarter.qin.fiscal_year}.3"
+          replace: "${coerce_qin.qin_typed.fiscal_year}.3"
           regex: true
           condition: ${compute_q.is_q1}
     out:
