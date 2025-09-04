@@ -27,6 +27,7 @@ from core.blocks.processing.data_quality.validate_rules import ValidateDataQuali
 from core.blocks.processing.data_quality.provenance_capture import ProvenanceCaptureBlock
 from core.blocks.processing.matching.record_linkage import RecordLinkageBlock
 from core.blocks.processing.matching.similarity_cluster import SimilarityClusterBlock
+from core.blocks.processing.matching.semantic_topk import SemanticTopKBlock
 from core.blocks.processing.external.api_http import ExternalHTTPApiBlock
 from core.blocks.processing.notifier.notify import NotifyBlock
 from core.blocks.processing.security.attestation import SignManifestBlock
@@ -36,6 +37,8 @@ from core.blocks.processing.table.pivot import TablePivotBlock
 from core.blocks.processing.table.from_rows import FromRowsToDataFrameBlock
 from core.blocks.processing.ai.process_llm import ProcessLLMBlock
 from core.blocks.processing.control.approval import ApprovalControlBlock
+from core.blocks.processing.nlp.chunk_texts import ChunkTextsBlock
+from core.blocks.processing.nlp.embed_texts import EmbedTextsBlock
 
 
 CTX = BlockContext(run_id="unit")
@@ -193,6 +196,52 @@ def test_similarity_cluster_minhash():
     spec = {"text_fields": ["text"]}
     out = blk.run(CTX, {"items": items, "feature_spec": spec, "method": "minhash", "threshold": 0.5})
     assert out["summary"]["clusters"] >= 1
+
+
+def test_chunk_texts_tokens_and_sentences():
+    blk = ChunkTextsBlock()
+    txt = "Hello world. " * 200
+    # tokens戦略は tiktoken が未導入ならスキップ
+    tiktoken = pytest.importorskip("tiktoken")
+    out_tok = blk.run(CTX, {"texts": [txt], "strategy": "tokens", "max_tokens": 50, "overlap_tokens": 10})
+    assert out_tok["summary"]["chunks"] >= 5
+    out_sent = blk.run(CTX, {"texts": ["A. B. C."], "strategy": "sentences", "max_tokens": 10})
+    assert out_sent["summary"]["chunks"] >= 1
+
+
+def test_embed_texts_depends_on_env():
+    blk = EmbedTextsBlock()
+    have_key = bool(os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"))
+    if not have_key:
+        with pytest.raises(Exception):
+            blk.run(CTX, {"texts": ["hello"]})
+    else:
+        out = blk.run(CTX, {"texts": ["hello", "world"], "normalize": True})
+        vecs = out.get("vectors")
+        assert isinstance(vecs, list) and len(vecs) == 2
+
+
+def test_semantic_topk_vectors_and_lexical():
+    blk = SemanticTopKBlock()
+    # Vector mode
+    q = [1.0, 0.0]
+    items = [
+        {"id": 1, "embedding": [1.0, 0.0]},
+        {"id": 2, "embedding": [0.0, 1.0]},
+    ]
+    out_vec = blk.run(CTX, {"query_embedding": q, "items": items, "metric": "cosine", "top_k": 1})
+    assert out_vec["results"][0]["item"]["id"] == 1
+    # Lexical fallback (require_embeddings = False)
+    out_lex = blk.run(
+        CTX,
+        {
+            "query_text": "hello",
+            "items": [{"text": "hello world"}, {"text": "bye"}],
+            "require_embeddings": False,
+            "top_k": 1,
+        },
+    )
+    assert out_lex["results"][0]["score"] >= 0.5
 
 
 def test_external_api_http_get_httpbin_or_expected_error():

@@ -1,0 +1,32 @@
+id: matching.semantic_topk
+version: 0.1.0
+entrypoint: blocks/processing/matching/semantic_topk.py:SemanticTopKBlock
+inputs:
+  query_text:
+    type: string
+  query_embedding:
+    type: array
+    description: list[number]。指定がない場合の自動埋め込みは既定で無効
+  items:
+    type: array
+    description: list[{ id?, text?, embedding? }]
+  metric:
+    type: string
+    enum: ["cosine", "dot", "euclidean"]
+  top_k:
+    type: integer
+  require_embeddings:
+    type: boolean
+    description: true の場合、items[*].embedding が無いとエラー（暗黙フォールバック無効）
+outputs:
+  results:
+    type: array
+    description: list[{ item, score, rank }]
+  summary:
+    type: object
+requirements:
+  - numpy
+description: |
+  クエリと items の埋め込みに基づいて類似度を計算し、上位N件を返却。
+
+

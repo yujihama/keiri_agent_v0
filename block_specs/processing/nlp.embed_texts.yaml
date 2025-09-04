@@ -1,0 +1,31 @@
+id: nlp.embed_texts
+version: 0.1.0
+entrypoint: blocks/processing/nlp/embed_texts.py:EmbedTextsBlock
+inputs:
+  texts:
+    type: array
+    description: list[string]。chunks未指定時に使用
+  chunks:
+    type: array
+    description: list[{ id?, text, ... }]。texts未指定時に使用
+  normalize:
+    type: boolean
+    description: 出力ベクトルをL2正規化（unit-norm）するか
+  provider_model:
+    type: string
+    description: 既定モデル上書き（llm_factoryの設定を優先。ここでは未使用）
+outputs:
+  vectors:
+    type: array
+    description: list[list[number]]（texts入力時）
+  items:
+    type: array
+    description: chunks に embedding=[...] を付加（chunks入力時）
+  summary:
+    type: object
+requirements:
+  - langchain_openai
+description: |
+  llm_factory.build_text_embedder を利用してベクトル化。プロバイダ/モデルは環境設定に準拠。
+
+
