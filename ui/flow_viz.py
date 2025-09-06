@@ -31,12 +31,15 @@ def persist_success_nodes(plan_id: str, states: Dict[str, str]) -> set[str]:
 
 
 def mark_success_on_states(states: Dict[str, str], success_nodes: Iterable[str]) -> Dict[str, str]:
+    # running を上書きしないようにする（表示の瞬断防止）
     for nid in list(success_nodes):
-        states[str(nid)] = "success"
+        key = str(nid)
+        if states.get(key) != "running":
+            states[key] = "success"
     return states
 
 
-def render_flow_html(
+def render_flow_html_legacy(
     plan,
     states: Dict[str, str],
     *,
@@ -75,10 +78,10 @@ def render_flow_html(
     html = generate_flow_html(plan, states, include_loop_nodes=include_loop_nodes)
     area = placeholder or st
 
-    # Debug: Check HTML structure
-    print(f"[flow] Generated HTML length: {len(html)}")
-    print(f"[flow] Running node ID: {running_node_id}")
-    print(f"[flow] HTML preview: {html[:200]}...")
+    # Debug: Check HTML structure (disabled)
+    # print(f"[flow] Generated HTML length: {len(html)}")
+    # print(f"[flow] Running node ID: {running_node_id}")
+    # print(f"[flow] HTML preview: {html[:200]}...")
 
     # Add minimal auto-scroll functionality without breaking layout
     if running_node_id:
@@ -112,9 +115,64 @@ def render_flow_html(
     else:
         final_html = html
 
-    # Debug: Check final HTML
-    print(f"[flow] Final HTML length: {len(final_html)}")
-    print(f"[flow] Final HTML preview: {final_html[:300]}...")
+    # Debug: Check final HTML (disabled)
+    # print(f"[flow] Final HTML length: {len(final_html)}")
+    # print(f"[flow] Final HTML preview: {final_html[:300]}...")
 
     area.markdown(final_html, unsafe_allow_html=True)
+
+
+def render_flow_html(
+    plan,
+    states: Dict[str, str],
+    *,
+    include_loop_nodes: bool = False,
+    placeholder=None,
+    throttle_ms: int | None = None,
+) -> None:
+    """
+    D3.js専用のフロー図レンダリング
+    """
+    from ui.flow_viz_config import get_flow_config, is_dev_mode
+    import os
+    
+    # レガシー表示への一時的な切り替え
+    use_legacy = os.getenv("KEIRI_USE_LEGACY_FLOW", "false").lower() == "true"
+    if use_legacy:
+        render_flow_html_legacy(
+            plan, states, 
+            include_loop_nodes=include_loop_nodes,
+            placeholder=placeholder,
+            throttle_ms=throttle_ms
+        )
+        return
+    
+    # D3.js表示を使用
+    try:
+        from ui.flow_viz_d3 import D3FlowRenderer
+        
+        config = get_flow_config()
+        
+        # 成功ノード管理
+        plan_id = getattr(plan, 'id', '')
+        success_nodes = init_success_nodes_namespace(plan_id)
+        states = mark_success_on_states(states, success_nodes)
+        persist_success_nodes(plan_id, states)
+        
+        # D3.jsでレンダリング
+        D3FlowRenderer.render_interactive(
+            plan, states,
+            width=config["width"],
+            height=config["height"],
+            placeholder=placeholder
+        )
+    except Exception as e:
+        # エラーの場合はレガシー実装にフォールバック
+        print(f"[flow] D3.js実装でエラー: {e}")
+        render_flow_html_legacy(
+            plan, states,
+            include_loop_nodes=include_loop_nodes,
+            placeholder=placeholder,
+            throttle_ms=throttle_ms
+        )
 

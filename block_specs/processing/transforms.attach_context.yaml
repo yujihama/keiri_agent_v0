@@ -1,0 +1,20 @@
+id: transforms.attach_context
+version: 0.1.0
+entrypoint: blocks/processing/transforms/attach_context.py:AttachContextBlock
+inputs:
+  items:
+    type: array
+  context:
+    type: object
+  as:
+    type: string
+outputs:
+  items:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  items の各要素に context をマージ/付与するユーティリティ。foreachで親の変数を子へ渡す用途に使う。
+
+

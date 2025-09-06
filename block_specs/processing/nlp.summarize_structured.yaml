@@ -1,6 +1,6 @@
 id: nlp.summarize_structured
 version: 1.1.0
-entrypoint: blocks/processing/ai/process_llm.py:ProcessLLMBlock
+entrypoint: core.blocks.processing.ai.process_llm:ProcessLLMBlock
 inputs:
   evidence_data:
     type: object

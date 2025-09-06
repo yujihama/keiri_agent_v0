@@ -1,0 +1,16 @@
+{
+  "ui.interactive_input": {
+    "upload_files": {
+      "collected_data": {
+        "file_a": "auto_resolve",
+        "file_b": "auto_resolve"
+      },
+      "approved": true,
+      "response": null,
+      "metadata": {
+        "submitted": true,
+        "mode": "collect"
+      }
+    }
+  }
+}

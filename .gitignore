@@ -8,3 +8,5 @@ runs/*
 .pytest_cache/*
 .cursor/*
 .serena/*
+headless/output/*
+logs

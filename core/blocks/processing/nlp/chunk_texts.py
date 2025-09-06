@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Optional
+import base64
 import re
 
 from core.blocks.base import BlockContext, ProcessingBlock
 from core.errors import BlockException, ErrorCode, create_input_error, wrap_exception
+from core.plan.text_extractor import extract_texts as _extract_texts
 
 
 def _normalize_spaces(text: str) -> str:
@@ -88,6 +90,25 @@ class ChunkTextsBlock(ProcessingBlock):
                     continue
                 name = str(f.get("name") or f.get("path") or "file")
                 s = str(f.get("text_excerpt") or f.get("text") or "")
+                if not s:
+                    # Try to recover from bytes/base64
+                    raw: Optional[bytes] = None
+                    if isinstance(f.get("bytes"), (bytes, bytearray)):
+                        raw = bytes(f.get("bytes"))  # type: ignore[arg-type]
+                    elif isinstance(f.get("base64"), str):
+                        try:
+                            raw = base64.b64decode(str(f.get("base64")))
+                        except Exception:
+                            raw = None
+                    if raw is not None:
+                        try:
+                            ext = ""
+                            if "." in name:
+                                ext = name[name.rfind(".") :].lower()
+                            s_list = _extract_texts([(name, raw)])
+                            s = s_list[0] if s_list else ""
+                        except Exception:
+                            s = ""
                 if s:
                     texts.append((name, s))
 

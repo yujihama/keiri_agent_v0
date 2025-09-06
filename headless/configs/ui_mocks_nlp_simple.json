@@ -1,0 +1,16 @@
+{
+  "ui.interactive_input": {
+    "upload_files": {
+      "collected_data": {
+        "file_a": "C:/Users/nyham/work/keiri_agent/tests/data/nlp_compare/A.txt",
+        "file_b": "C:/Users/nyham/work/keiri_agent/tests/data/nlp_compare/B.txt"
+      },
+      "approved": true,
+      "response": null,
+      "metadata": {
+        "submitted": true,
+        "mode": "collect"
+      }
+    }
+  }
+}

@@ -14,7 +14,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any, Dict
 
 # .env の読み込み（任意）
 try:
@@ -26,6 +26,45 @@ except Exception:
 # プロジェクトルートを sys.path に追加（このファイルは headless/ 配下にあるため）
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Streamlit を `streamlit run` なしで読み込むと発生する冗長な WARNING を抑止
+import logging
+import warnings
+
+
+def _suppress_streamlit_baremode_warnings() -> None:
+    """Suppress noisy Streamlit warnings when running in bare mode.
+
+    - missing ScriptRunContext
+    - Session state does not function when running a script without `streamlit run`
+    """
+    targets = [
+        "streamlit.runtime.scriptrunner_utils.script_run_context",
+        "streamlit.runtime.state.session_state_proxy",
+        "streamlit.runtime.scriptrunner_utils",
+    ]
+    for name in targets:
+        lg = logging.getLogger(name)
+        try:
+            lg.setLevel(logging.ERROR)
+            lg.propagate = False
+        except Exception:
+            continue
+    # Umbrella for any other Streamlit loggers
+    try:
+        logging.getLogger("streamlit").setLevel(logging.ERROR)
+    except Exception:
+        pass
+    # In case some paths use warnings.warn
+    try:
+        warnings.filterwarnings("ignore", message=".*ScriptRunContext.*")
+        warnings.filterwarnings("ignore", message=".*Session state does not function.*")
+    except Exception:
+        pass
+
+
+# 可能な限り早い段階で抑止を適用（以降の import で Streamlit が間接的に読み込まれても静かにする）
+_suppress_streamlit_baremode_warnings()
 
 from core.blocks.registry import BlockRegistry
 from core.plan.loader import load_plan
@@ -101,12 +140,87 @@ def output_results(results: dict, output_dir: Optional[Path], plan_id: str) -> N
             json.dump(results, f, ensure_ascii=False, indent=2, default=str)
         print(f"Results saved to: {results_file}")
 
-        # バイナリの保存（name/bytes 想定）
-        for key, value in results.items():
-            if isinstance(value, dict) and isinstance(value.get("bytes"), (bytes, bytearray)):
-                name = value.get("name", f"{key}.bin")
-                (output_dir / name).write_bytes(value["bytes"])
+        # バイナリの保存（name/bytes, workbook_b64, base64 などを検出）
+        import base64, ast
+
+        def _try_write(obj: Dict[str, Any], default_name: str) -> bool:
+            # bytes（本物）
+            if isinstance(obj.get("bytes"), (bytes, bytearray)):
+                name = obj.get("name", default_name)
+                (output_dir / name).write_bytes(obj["bytes"])  # type: ignore[arg-type]
                 print(f"Binary saved: {(output_dir / name)}")
+                return True
+            # bytes（{'__type': 'b64bytes', 'data': '...'} ラッパー）
+            if isinstance(obj.get("bytes"), dict):
+                bobj = obj.get("bytes") or {}
+                try:
+                    if isinstance(bobj, dict) and str(bobj.get("__type")).lower() == "b64bytes":
+                        data = bobj.get("data")
+                        if isinstance(data, str) and data:
+                            raw = base64.b64decode(data)
+                            name = obj.get("name", default_name)
+                            (output_dir / name).write_bytes(raw)
+                            print(f"Binary saved: {(output_dir / name)}")
+                            return True
+                except Exception:
+                    pass
+            # bytes（Python文字列表現 b'..'）
+            if isinstance(obj.get("bytes"), str):
+                s = obj.get("bytes") or ""
+                try:
+                    if isinstance(s, str) and s.startswith("b'") and s.endswith("'"):
+                        b = ast.literal_eval(s)
+                        if isinstance(b, (bytes, bytearray)):
+                            name = obj.get("name", default_name)
+                            (output_dir / name).write_bytes(b)  # type: ignore[arg-type]
+                            print(f"Binary saved: {(output_dir / name)}")
+                            return True
+                except Exception:
+                    pass
+            # workbook_b64 / base64
+            for k in ("workbook_b64", "base64"):
+                if isinstance(obj.get(k), str) and obj.get(k):
+                    try:
+                        raw = base64.b64decode(obj[k])  # type: ignore[index]
+                        name = obj.get("name", default_name)
+                        (output_dir / name).write_bytes(raw)
+                        print(f"Binary saved: {(output_dir / name)}")
+                        return True
+                    except Exception:
+                        continue
+            return False
+
+        def _walk(o: Any, key_hint: str = "artifact") -> None:
+            if isinstance(o, dict):
+                # 該当なら保存
+                _try_write(o, f"{key_hint}.bin")
+                for k, v in o.items():
+                    _walk(v, str(k))
+            elif isinstance(o, list):
+                for i, v in enumerate(o):
+                    _walk(v, f"{key_hint}_{i}")
+
+        _walk(results, plan_id)
+
+        # 追加: アーティファクトJSONもスキャンして保存（resultsに含まれない場合のフォールバック）
+        try:
+            plan_dir = output_dir / plan_id
+            if plan_dir.exists() and plan_dir.is_dir():
+                # 最新タイムスタンプのサブディレクトリを検出
+                subdirs = [p for p in plan_dir.iterdir() if p.is_dir()]
+                subdirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                latest_dir = subdirs[0] if subdirs else None
+                artifacts_dir = latest_dir / "artifacts" if latest_dir else None
+                if artifacts_dir and artifacts_dir.exists():
+                    for jf in artifacts_dir.glob("*_outputs.json"):
+                        try:
+                            with jf.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            _walk(data, jf.stem)
+                        except Exception:
+                            continue
+        except Exception:
+            pass
 
     print("\n=== Execution Results ===")
     print(json.dumps(results, ensure_ascii=False, indent=2, default=str))

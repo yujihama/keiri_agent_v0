@@ -261,10 +261,10 @@ def compute_node_states(plan: Plan, events: List[Dict[str, Any]]) -> Dict[str, s
         node_id = ev.get("node")
         if not node_id or node_id not in states:
             continue
-        # UI/Loopイベントも反映
-        if t in {"node_start", "ui_wait", "loop_start", "loop_iter_start"}:
+        # UI/Loop/Subflow イベントも反映
+        if t in {"node_start", "ui_wait", "loop_start", "loop_iter_start", "subflow_start"}:
             states[node_id] = "running"
-        elif t in {"node_finish", "ui_submit", "ui_reuse", "loop_finish"}:
+        elif t in {"node_finish", "ui_submit", "ui_reuse", "loop_finish", "subflow_finish"}:
             states[node_id] = "success"
         elif t == "node_skip":
             states[node_id] = "skipped"

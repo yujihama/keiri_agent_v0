@@ -7,7 +7,7 @@ inputs:
     description: list[string]。未指定時は files[*].text_excerpt を使用
   files:
     type: array
-    description: 任意: { name, text_excerpt } の配列
+    description: "任意: { name, text_excerpt } の配列"
   strategy:
     type: string
     enum: ["tokens", "sentences", "paragraphs", "markdown_headings"]

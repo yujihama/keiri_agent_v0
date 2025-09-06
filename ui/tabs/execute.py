@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -88,7 +89,7 @@ def _execute_run(plan_path, registry: BlockRegistry, *, edited_vars: dict | None
     def on_event(ev):
         events_for_dag.append(ev)
         et = ev.get("type")
-        if et in {"node_start", "node_finish", "node_skip", "error", "ui_wait", "ui_submit", "ui_reuse", "loop_start", "loop_finish", "loop_iter_start", "loop_iter_finish", "finish"}:
+        if et in {"node_start", "node_finish", "node_skip", "error", "ui_wait", "ui_submit", "ui_reuse", "loop_start", "loop_finish", "loop_iter_start", "loop_iter_finish", "subflow_start", "subflow_finish", "finish"}:
             try:
                 from core.plan.dag_viz import compute_node_states
                 states = compute_node_states(plan, events_for_dag)
@@ -254,6 +255,26 @@ def _execute_run(plan_path, registry: BlockRegistry, *, edited_vars: dict | None
 
 def render(registry: BlockRegistry) -> None:
     st.subheader("業務実施")
+    
+    # D3.js専用のフロー図設定（開発モードのみ）
+    from ui.flow_viz_config import is_dev_mode
+    
+    if is_dev_mode():
+        with st.sidebar:
+            st.divider()
+            st.markdown("### D3.jsフロー図設定")
+            
+            # レガシー表示への切り替えオプション
+            use_legacy = st.checkbox(
+                "レガシー表示を使用", 
+                value=False,
+                help="エラーが発生した場合にチェック"
+            )
+            if use_legacy:
+                os.environ["KEIRI_USE_LEGACY_FLOW"] = "true"
+            else:
+                os.environ.pop("KEIRI_USE_LEGACY_FLOW", None)
+    
     plans = list((Path.cwd() / "designs").resolve().rglob("*.yaml"))
     plan_path = st.selectbox("実行するPlanを選択", plans, key="exec_select")
 
@@ -274,8 +295,11 @@ def render(registry: BlockRegistry) -> None:
             succ = init_success_nodes_namespace(plan_preview_for_dag.id)
             states0 = {str(nid): "success" for nid in succ}
             render_flow_html(plan_preview_for_dag, states0, include_loop_nodes=False, placeholder=dag_area)
-    except Exception:
-        st.warning("フロー図の表示に失敗しました。")
+    except Exception as e:
+        st.error(f"フロー図の表示に失敗しました: {str(e)}")
+        import traceback
+        st.text("詳細エラー:")
+        st.code(traceback.format_exc())
 
     st.divider()
 

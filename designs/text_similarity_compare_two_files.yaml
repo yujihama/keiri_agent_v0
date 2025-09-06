@@ -1,0 +1,220 @@
+apiVersion: v1
+id: text_similarity_compare_two_files
+version: 0.2.0
+policy:
+  on_error: stop
+  retries: 0
+ui:
+  layout: [upload_files]
+graph:
+  # 1) 2ファイルのアップロード（UI入力）
+  - id: upload_files
+    block: ui.interactive_input
+    in:
+      mode: collect
+      requirements:
+        - id: file_a
+          type: file
+          label: "ファイルA"
+          required: true
+          accept: ".txt,.md"
+        - id: file_b
+          type: file
+          label: "ファイルB"
+          required: true
+          accept: ".txt,.md"
+    out:
+      collected_data: uploaded
+
+  # 2) 軽量テキスト抽出（動的ファイル処理）
+  - id: extract_texts
+    block: file.extract_texts
+    in:
+      files:
+        - name: "A.txt"
+          bytes: "${upload_files.collected_data.file_a}"
+        - name: "B.txt"
+          bytes: "${upload_files.collected_data.file_b}"
+    out:
+      evidence: evidence
+
+  # 3) ファイルごとに1件抽出
+  - id: filter_a
+    block: transforms.filter
+    in:
+      items: "${extract_texts.evidence.files}"
+      conditions:
+        - field: "name"
+          operator: eq
+          value: "A.txt"
+    out: { filtered: filtered_a }
+
+  - id: filter_b
+    block: transforms.filter
+    in:
+      items: "${extract_texts.evidence.files}"
+      conditions:
+        - field: "name"
+          operator: eq
+          value: "B.txt"
+    out: { filtered: filtered_b }
+
+  # 4) チャンク分割
+  - id: chunk_a
+    block: nlp.chunk_texts
+    in:
+      files: "${filter_a.filtered}"
+      strategy: tokens
+      max_tokens: 300
+      overlap_tokens: 40
+    out: { chunks: chunks_a }
+
+  - id: chunk_b
+    block: nlp.chunk_texts
+    in:
+      files: "${filter_b.filtered}"
+      strategy: tokens
+      max_tokens: 300
+      overlap_tokens: 40
+    out: { chunks: chunks_b }
+
+  # 5) 埋め込み
+  - id: embed_a
+    block: nlp.embed_texts
+    in:
+      chunks: "${chunk_a.chunks}"
+      normalize: true
+    out: { items: embedded_a }
+
+  - id: embed_b
+    block: nlp.embed_texts
+    in:
+      chunks: "${chunk_b.chunks}"
+      normalize: true
+    out: { items: embedded_b }
+
+  # 6) シンプルな類似度計算（A->B）
+  - id: test_similarity_ab
+    block: matching.semantic_topk
+    in:
+      query_embedding: "${embed_a.items.0.embedding}"
+      items: "${embed_b.items}"
+      metric: cosine
+      top_k: 3
+      require_embeddings: true
+    out: { results: similarity_ab }
+
+  # BA方向の類似度計算
+  - id: test_similarity_ba
+    block: matching.semantic_topk
+    in:
+      query_embedding: "${embed_b.items.0.embedding}"
+      items: "${embed_a.items}"
+      metric: cosine
+      top_k: 3
+      require_embeddings: true
+    out: { results: similarity_ba }
+
+  # 7) LLMで共通/相違の観点を抽出（シンプル版）
+  - id: llm_compare_ab
+    block: nlp.summarize_structured
+    in:
+      evidence_data:
+        files: "${filter_a.filtered}"
+        rows: "${test_similarity_ab.results}"
+      instruction: "以下のAチャンクと候補Bチャンクに共通する観点、Aのみ、Bのみの観点をそれぞれ短い箇条書きで抽出し、items配列で返してください。各itemは{group,type,point}で、typeはcommon|only_a|only_bのいずれか。groupはA_chunkの先頭30文字。"
+      output_schema:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              group: { type: string }
+              type: { type: string }
+              point: { type: string }
+    out: { results: llm_results_ab }
+
+  - id: llm_compare_ba
+    block: nlp.summarize_structured
+    in:
+      evidence_data:
+        files: "${filter_b.filtered}"
+        rows: "${test_similarity_ba.results}"
+      instruction: "以下のBチャンクと候補Aチャンクに共通する観点、Bのみ、Aのみの観点をそれぞれ短い箇条書きで抽出し、items配列で返してください。各itemは{group,type,point}で、typeはcommon|only_b|only_aのいずれか。groupはB_chunkの先頭30文字。"
+      output_schema:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              group: { type: string }
+              type: { type: string }
+              point: { type: string }
+    out: { results: llm_results_ba }
+
+  # 8) 行の集約
+  - id: flatten_rows
+    block: transforms.flatten_items
+    in:
+      results_list:
+        - "${llm_compare_ab.results}"
+        - "${llm_compare_ba.results}"
+    out: { items: rows }
+
+  # 8.5) 先に空のExcel（ヘッダのみ）を作成しておく（後工程で失敗してもファイルは残る）
+  - id: write_excel_init
+    block: excel.write
+    in:
+      workbook: { name: "text_compare.xlsx" }
+      cell_updates:
+        - { sheet: "Summary", cells: { "A1": "Group", "B1": "Type", "C1": "Point" } }
+    out: { workbook_updated: wb_init }
+
+  # 9) Excelへ書き出し
+  - id: write_excel
+    block: excel.write
+    in:
+      # 直前で作ったワークブックを更新（存在しない場合は自動新規作成）
+      workbook: "${write_excel_init.wb_init}"
+      cell_updates:
+        - { sheet: "Summary", cells: { "A1": "Group", "B1": "Type", "C1": "Point" } }
+      column_updates:
+        - sheet: "Summary"
+          header_row: 1
+          start_row: 2
+          write_header: false
+          columns:
+            - { header: "Group", path: "group" }
+            - { header: "Type", path: "type" }
+            - { header: "Point", path: "point" }
+          values: "${flatten_rows.items}"
+        - sheet: "Details"
+          header_row: 1
+          start_row: 2
+          write_header: true
+          clear_existing: true
+          columns:
+            - { header: "Direction", path: "direction" }
+            - { header: "Query_text", path: "query_text" }
+            - { header: "TopMatch_text", path: "top_match.item.text" }
+            - { header: "TopMatch_score", path: "top_match.score" }
+          values:
+            - direction: "A->B"
+              query_text: "${embed_a.items.0.text}"
+              top_match: "${test_similarity_ab.results.0}"
+        - sheet: "Details"
+          header_row: 1
+          start_row: 3
+          write_header: false
+          columns:
+            - { header: "Direction", path: "direction" }
+            - { header: "Query_text", path: "query_text" }
+            - { header: "TopMatch_text", path: "top_match.item.text" }
+            - { header: "TopMatch_score", path: "top_match.score" }
+          values:
+            - direction: "B->A"
+              query_text: "${embed_b.items.0.text}"
+              top_match: "${test_similarity_ba.results.0}"
+    out: { workbook_updated: wb }
+
+

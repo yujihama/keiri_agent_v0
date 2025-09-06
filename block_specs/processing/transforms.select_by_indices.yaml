@@ -1,0 +1,20 @@
+id: transforms.select_by_indices
+version: 0.1.0
+entrypoint: blocks/processing/transforms/select_by_indices.py:SelectByIndicesBlock
+inputs:
+  items:
+    type: array
+    description: list[object]
+  indices:
+    type: array
+    description: list[integer]（0-based）
+outputs:
+  rows:
+    type: array
+  summary:
+    type: object
+requirements: []
+description: |
+  配列とインデックス配列から、該当要素を抽出して返すユーティリティブロック。
+
+

@@ -1,0 +1,4 @@
+{
+  "file_a": "tests/data/nlp_compare/A.txt",
+  "file_b": "tests/data/nlp_compare/B.txt"
+}

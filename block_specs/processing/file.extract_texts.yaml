@@ -1,0 +1,16 @@
+id: file.extract_texts
+version: 0.1.0
+entrypoint: blocks/processing/file/extract_texts.py:ExtractTextsBlock
+inputs:
+  files:
+    type: array
+    description: list[{ name, bytes|base64 }]
+outputs:
+  evidence:
+    type: object
+    description: { files: [ { name, ext, size, text_excerpt } ] }
+requirements: []
+description: |
+  バイト列/BASE64で渡されたファイル群からテキストを抽出し、evidence.files として返す。
+
+

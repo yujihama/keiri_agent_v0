@@ -27,6 +27,12 @@ class FlattenItemsBlock(ProcessingBlock):
 
         def _extract_items(obj: Any) -> List[Dict[str, Any]]:
             out: List[Dict[str, Any]] = []
+            # 配列なら各要素を再帰的に抽出
+            if isinstance(obj, list):
+                for it in obj:
+                    out.extend(_extract_items(it))
+                return out
+            # dictでなければ空
             if not isinstance(obj, dict):
                 return out
             # 1) direct results
@@ -46,9 +52,8 @@ class FlattenItemsBlock(ProcessingBlock):
                     continue
             return out
 
-        if isinstance(src, list):
-            for elem in src:
-                items.extend(_extract_items(elem))
+        # 入口が何であっても再帰処理
+        items.extend(_extract_items(src))
 
         return {"items": items}
 

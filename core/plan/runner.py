@@ -380,6 +380,17 @@ class PlanRunner:
                 for seg in remaining:
                     if isinstance(base_val, dict) and seg in base_val:
                         base_val = base_val[seg]
+                    elif isinstance(base_val, list):
+                        try:
+                            idx = int(seg)
+                            if 0 <= idx < len(base_val):
+                                base_val = base_val[idx]
+                            else:
+                                base_val = None
+                                break
+                        except ValueError:
+                            base_val = None
+                            break
                     else:
                         base_val = None
                         break
@@ -848,7 +859,6 @@ class PlanRunner:
                         inputs = {k: resolve_deep(v) for k, v in node.inputs.items()}
 
                         def _exec(block_obj: ProcessingBlock, node_id: str, inputs_dict: Dict[str, Any]):
-                            emit({"type": "node_start", "run_id": run_id, "node": node_id})
                             # retry policy (minimal)
                             node_policy = node.policy or plan.policy
                             retries = node_policy.retries if node_policy else 0
@@ -937,6 +947,8 @@ class PlanRunner:
                             # exhausted
                             raise last_err  # type: ignore[misc]
 
+                        # Emit node_start in main thread before scheduling background execution
+                        emit({"type": "node_start", "run_id": run_id, "node": nid})
                         futures.append(ex.submit(_exec, block, nid, inputs))
 
                 for fut in as_completed(futures):
@@ -1028,6 +1040,8 @@ class PlanRunner:
                                             pass
                                         out = block.render(ctx, inputs, execution_context)
                             else:
+                                # Emit node_start before synchronous block.run in fallback path
+                                emit({"type": "node_start", "run_id": run_id, "node": nid})
                                 # create node-scoped context to include __node_id for block logging
                                 node_ctx = BlockContext(run_id=ctx.run_id, workspace=ctx.workspace, vars=dict(ctx.vars))
                                 try:
