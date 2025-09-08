@@ -10,6 +10,7 @@ from core.blocks.registry import BlockRegistry
 from core.plan.loader import load_plan
 from core.plan.runner import PlanRunner
 from core.plan.execution_context import ExecutionContext
+from tests.utils import inject_fastpath_for_llm
 
 
 @pytest.mark.e2e
@@ -18,19 +19,8 @@ def test_invoice_reconciliation_e2e(tmp_path: Path):
     load_dotenv()
 
     plan = load_plan(Path("designs/invoice_payment_reconciliation_fixed.yaml"))
-    # LLM ブロックを fast-path に（answer注入）
-    for n in plan.graph:
-        try:
-            if getattr(n, "type", "") == "loop" and n.body and n.body.plan and n.body.plan.graph:
-                for cn in n.body.plan.graph:
-                    if getattr(cn, "block", "") == "ai.process_llm":
-                        cin = dict(getattr(cn, "inputs", {}))
-                        ev = dict(cin.get("evidence_data") or {})
-                        ev["answer"] = "{\"results\": [], \"summary\": {}}"
-                        cin["evidence_data"] = ev
-                        cn.inputs = cin
-        except Exception:
-            pass
+    # LLM ブロックを fast-path に（共通ユーティリティ経由で注入）
+    inject_fastpath_for_llm(plan)
     reg = BlockRegistry(); reg.load_specs()
 
     runs_dir = tmp_path / "runs"

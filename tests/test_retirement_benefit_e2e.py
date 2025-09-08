@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import base64
 from pathlib import Path
 
 import pytest
@@ -12,16 +11,6 @@ from core.blocks.registry import BlockRegistry
 from core.plan.loader import load_plan
 from core.plan.runner import PlanRunner
 from core.plan.execution_context import ExecutionContext
-
-
-def _encode_for_json(obj):
-    if isinstance(obj, (bytes, bytearray)):
-        return {"__type": "b64bytes", "data": base64.b64encode(bytes(obj)).decode("ascii")}
-    if isinstance(obj, dict):
-        return {k: _encode_for_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_encode_for_json(v) for v in obj]
-    return obj
 
 
 def _preferred_path(base_dir: Path, primary: str, fallback: str) -> Path:
