@@ -138,7 +138,7 @@ def extract_b64_workbooks_from_results(results: Dict[str, Any] | None, plan) -> 
 
     return items
 
-
+@st.fragment
 def render_workbook_downloads(artifacts: List[WorkbookArtifact], output_method: str, plan_id: str) -> None:
     for idx, art in enumerate(artifacts):
         if output_method in ("download", "both"):
@@ -159,6 +159,7 @@ def render_workbook_downloads(artifacts: List[WorkbookArtifact], output_method: 
                 st.success(f"保存しました: {out_path}")
 
 
+@st.fragment
 def render_b64_downloads(b64_items: List[Tuple[str, str]]) -> None:
     for idx, (label, b64) in enumerate(b64_items):
         st.download_button(

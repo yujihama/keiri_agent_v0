@@ -14,8 +14,8 @@ load_dotenv()
 
 
 def main():
-    st.set_page_config(page_title="Keiri Agent", layout="wide")
-    st.title("Keiri Agent")
+    st.set_page_config(page_title="Plan-Based Agent", layout="wide")
+    st.title("Plan-Based Agent")
 
     registry = BlockRegistry()
     registry.load_specs()

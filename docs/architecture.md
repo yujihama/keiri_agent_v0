@@ -432,7 +432,7 @@ if error:
 ## 10. ディレクトリ/ファイル構成（改訂）
 
 ```
-keiri_agent/
+plan-based-agent/
 ├── app.py
 ├── core/
 │   ├── blocks/

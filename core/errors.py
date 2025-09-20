@@ -1,4 +1,4 @@
-"""Structured error handling for keiri_agent
+"""Structured error handling for plan-based-agent
 
 This module defines the BlockError class and error code system as specified
 in the design document.

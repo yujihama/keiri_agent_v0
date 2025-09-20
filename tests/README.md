@@ -6,7 +6,7 @@
 
 ```powershell
 # ルートへ移動
-Set-Location C:\Users\nyham\work\keiri_agent
+Set-Location C:\Users\nyham\work\plan-based-agent
 
 # 仮想環境を有効化（既存のvenvを使用）
 .\venv\Scripts\Activate.ps1

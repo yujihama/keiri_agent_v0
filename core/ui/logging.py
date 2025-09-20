@@ -82,10 +82,10 @@ def configure_logging(log_dir: str | None = None, *, level: str | None = None, c
     filt = ContextFilter()
 
     # File handler (rotating)
-    log_dir = log_dir or os.getenv("KEIRI_LOG_DIR", "logs")
+    log_dir = log_dir or os.getenv("PLAN_BASED_AGENT_LOG_DIR", "logs")
     try:
         os.makedirs(log_dir, exist_ok=True)
-        fhandler = RotatingFileHandler(os.path.join(log_dir, "keiri_agent.log"), maxBytes=1_000_000, backupCount=5, encoding="utf-8")
+        fhandler = RotatingFileHandler(os.path.join(log_dir, "plan-based-agent.log"), maxBytes=1_000_000, backupCount=5, encoding="utf-8")
         fhandler.setLevel(lvl)
         fhandler.setFormatter(JsonFormatter())
         fhandler.addFilter(filt)

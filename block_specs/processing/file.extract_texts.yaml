@@ -8,6 +8,16 @@ inputs:
 outputs:
   evidence:
     type: object
+    properties:
+      files:
+        type: array
+        items:
+          type: object
+          properties:
+            name: { type: string }
+            ext: { type: string }
+            size: { type: integer }
+            text_excerpt: { type: string }
     description: { files: [ { name, ext, size, text_excerpt } ] }
 requirements: []
 description: |

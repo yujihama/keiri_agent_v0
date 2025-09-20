@@ -198,8 +198,7 @@ class PlanRunner:
         # Summarizer for debug logging to avoid dumping raw bytes/huge payloads
         def _summarize_for_log(value: Any, depth: int = 0) -> Any:
             try:
-                if depth > 3:
-                    return "<depth_limit>"
+                # ネスト深度制限を撤廃（depthチェックを削除）
                 if isinstance(value, (bytes, bytearray)):
                     return {"__type": "bytes", "len": len(value)}
                 if isinstance(value, str):

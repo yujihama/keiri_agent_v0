@@ -47,7 +47,7 @@ graph:
         - field: "name"
           operator: eq
           value: "A.txt"
-    out: { filtered: filtered_a }
+    out: { filtered: filtered }
 
   - id: filter_b
     block: transforms.filter
@@ -57,7 +57,7 @@ graph:
         - field: "name"
           operator: eq
           value: "B.txt"
-    out: { filtered: filtered_b }
+    out: { filtered: filtered }
 
   # 4) チャンク分割
   - id: chunk_a
@@ -67,7 +67,7 @@ graph:
       strategy: tokens
       max_tokens: 300
       overlap_tokens: 40
-    out: { chunks: chunks_a }
+    out: { chunks: chunks }
 
   - id: chunk_b
     block: nlp.chunk_texts
@@ -76,7 +76,7 @@ graph:
       strategy: tokens
       max_tokens: 300
       overlap_tokens: 40
-    out: { chunks: chunks_b }
+    out: { chunks: chunks }
 
   # 5) 埋め込み
   - id: embed_a
@@ -84,14 +84,14 @@ graph:
     in:
       chunks: "${chunk_a.chunks}"
       normalize: true
-    out: { items: embedded_a }
+    out: { items: items }
 
   - id: embed_b
     block: nlp.embed_texts
     in:
       chunks: "${chunk_b.chunks}"
       normalize: true
-    out: { items: embedded_b }
+    out: { items: items }
 
   # 6) シンプルな類似度計算（A->B）
   - id: test_similarity_ab
@@ -102,7 +102,7 @@ graph:
       metric: cosine
       top_k: 3
       require_embeddings: true
-    out: { results: similarity_ab }
+    out: { results: results }
 
   # BA方向の類似度計算
   - id: test_similarity_ba
@@ -113,7 +113,7 @@ graph:
       metric: cosine
       top_k: 3
       require_embeddings: true
-    out: { results: similarity_ba }
+    out: { results: results }
 
   # 7) LLMで共通/相違の観点を抽出（シンプル版）
   - id: llm_compare_ab
@@ -132,7 +132,7 @@ graph:
               group: { type: string }
               type: { type: string }
               point: { type: string }
-    out: { results: llm_results_ab }
+    out: { results: results }
 
   - id: llm_compare_ba
     block: nlp.summarize_structured
@@ -150,7 +150,7 @@ graph:
               group: { type: string }
               type: { type: string }
               point: { type: string }
-    out: { results: llm_results_ba }
+    out: { results: results }
 
   # 8) 行の集約
   - id: flatten_rows
@@ -159,7 +159,7 @@ graph:
       results_list:
         - "${llm_compare_ab.results}"
         - "${llm_compare_ba.results}"
-    out: { items: rows }
+    out: { items: items }
 
   # 8.5) 先に空のExcel（ヘッダのみ）を作成しておく（後工程で失敗してもファイルは残る）
   - id: write_excel_init
@@ -168,14 +168,14 @@ graph:
       workbook: { name: "text_compare.xlsx" }
       cell_updates:
         - { sheet: "Summary", cells: { "A1": "Group", "B1": "Type", "C1": "Point" } }
-    out: { workbook_updated: wb_init }
+    out: { workbook_updated: workbook_updated }
 
   # 9) Excelへ書き出し
   - id: write_excel
     block: excel.write
     in:
       # 直前で作ったワークブックを更新（存在しない場合は自動新規作成）
-      workbook: "${write_excel_init.wb_init}"
+      workbook: "${write_excel_init.workbook_updated}"
       cell_updates:
         - { sheet: "Summary", cells: { "A1": "Group", "B1": "Type", "C1": "Point" } }
       column_updates:
@@ -215,6 +215,6 @@ graph:
             - direction: "B->A"
               query_text: "${embed_b.items.0.text}"
               top_match: "${test_similarity_ba.results.0}"
-    out: { workbook_updated: wb }
+    out: { workbook_updated: workbook_updated }
 
 

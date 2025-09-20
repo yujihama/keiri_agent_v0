@@ -2,7 +2,7 @@
 
 ## 概要
 
-keiri_agentはD3.jsベースの高機能フロー図表示を採用しています。
+plan-based-agentはD3.jsベースの高機能フロー図表示を採用しています。
 
 ## 主な機能
 
@@ -59,7 +59,7 @@ streamlit run app.py
 
 2. プロジェクトルートから実行：
    ```bash
-   cd C:\Users\nyham\work\keiri_agent
+   cd C:\Users\nyham\work\plan-based-agent
    streamlit run app.py
    ```
 

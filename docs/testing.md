@@ -13,7 +13,7 @@
 ## セットアップ（初回）
 
 ```powershell
-cd C:\Users\nyham\work\keiri_agent
+cd C:\Users\nyham\work\plan-based-agent
 if (Test-Path .\venv\Scripts\Activate.ps1) { .\venv\Scripts\Activate.ps1 } else { py -3 -m venv venv; .\venv\Scripts\Activate.ps1 }
 python -m pip install -U pip setuptools wheel
 python -m pip install -r requirements.txt

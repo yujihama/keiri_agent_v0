@@ -35,7 +35,7 @@
    - 参考ドキュメント（任意、複数）
    - テンプレート（複数選択可・任意）
 2) 「自動生成」ボタンを押下すると生成を開始。
-3) プラン生成のために不足項目がある場合、自律的にDesignチャットで対話収集（複数ターン）。チャットは「C:\Users\nyham\work\keiri_agent\block_specs\ui\ui.interactive_input.yaml」を流用すること。
+3) プラン生成のために不足項目がある場合、自律的にDesignチャットで対話収集（複数ターン）。チャットは「C:\Users\nyham\work\plan-based-agent\block_specs\ui\ui.interactive_input.yaml」を流用すること。
 4) 生成器は下記の規則で Plan を構築し、検証/ドライラン、エラーの場合は修復まで行う。
 5) 問題なければ YAML を編集可能領域に表示し、ユーザーは「検証/ドライラン」「登録」で保存。
 
@@ -126,7 +126,7 @@
 - 実装段階: v1 は 0 回（差し戻しなし）→ v1.1 で `max_attempts=2` の反復を追加。
 
 ### 7. Designチャット
-- プラン生成において不足している情報があれば `requirements` を生成し、「C:\Users\nyham\work\keiri_agent\block_specs\ui\ui.interactive_input.yaml」の inquire モードを流用して情報収集する。
+- プラン生成において不足している情報があれば `requirements` を生成し、「C:\Users\nyham\work\plan-based-agent\block_specs\ui\ui.interactive_input.yaml」の inquire モードを流用して情報収集する。
 - 要件ビルダーの仕様（概念）:
   - 入力: `plan` または `validate_plan()` のエラー一覧
   - 出力: `Requirement[]`
@@ -240,7 +240,7 @@
 ---
 
 ## ログ/監査・メトリクス
-- 生成イベントを JSONL で `logs/keiri_agent.log` とラン別ファイルへ記録（将来: `design_engine.generate` 専用タグ）。
+- 生成イベントを JSONL で `logs/plan-based-agent.log` とラン別ファイルへ記録（将来: `design_engine.generate` 専用タグ）。
 - 主要メトリクス: 生成試行回数、検証エラー件数、自己修復反復回数、ドライラン所要時間、採用ブロック分布。
 
 ---

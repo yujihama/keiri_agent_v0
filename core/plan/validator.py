@@ -372,6 +372,20 @@ def validate_plan(plan: Plan, registry: BlockRegistry) -> List[str]:
                 expected = spec_in.get("type")
             # Use root alias type for comparison
             actual = produced_types.get(src_node, {}).get(alias_root)
+            # Handle nested properties in object types
+            if actual == "object" and "." in alias:
+                nested_path = alias.split(".", 1)[1]
+                # Try to get nested type from spec
+                if src_node in produced_types and alias_root in produced_types[src_node]:
+                    src_spec = block_specs.get(node_by_id[src_node].block)
+                    if src_spec and src_spec.outputs:
+                        out_schema = src_spec.outputs.get(alias_root)
+                        if out_schema and "properties" in out_schema:
+                            properties = out_schema["properties"]
+                            if nested_path in properties:
+                                nested_type = properties[nested_path].get("type")
+                                if nested_type:
+                                    actual = nested_type
             if expected is not None and actual is not None and expected != actual:
                 # 緩和: 参照元が object でエイリアスのネストで取得する場合は型不一致を許容
                 # 例: expected=int だが ${node.alias.path} で alias が object のとき

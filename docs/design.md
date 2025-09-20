@@ -460,7 +460,7 @@ class EventHandler:
 # ディレクトリ構成
 
 ```
-keiri_agent/
+plan-based-agent/
 ├── app.py                          # Streamlitアプリケーションのエントリーポイント
 ├── core/
 │   ├── blocks/
